@@ -3,7 +3,17 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { getJob, updateJob, type Job, type JobStatus } from "@/lib/jobs";
+import {
+  getJob,
+  updateJob,
+  type Job,
+  type JobStatus,
+} from "@/lib/jobs";
+import {
+  createQuote,
+  getQuoteForJob,
+  type Quote,
+} from "@/lib/quotes";
 
 const statuses: JobStatus[] = [
   "Opportunity",
@@ -23,21 +33,27 @@ export default function JobPage() {
   const id = params.id as string;
 
   const [job, setJob] = useState<Job | null>(null);
+  const [quote, setQuote] = useState<Quote | null>(null);
   const [loading, setLoading] = useState(true);
+  const [creatingQuote, setCreatingQuote] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     async function load() {
       try {
-        const result = await getJob(id);
+        const [jobResult, quoteResult] = await Promise.all([
+          getJob(id),
+          getQuoteForJob(id),
+        ]);
 
-        if (!result) {
+        if (!jobResult) {
           router.replace("/jobs");
           return;
         }
 
-        setJob(result);
+        setJob(jobResult);
+        setQuote(quoteResult);
       } catch (err) {
         setError(
           err instanceof Error
@@ -52,8 +68,37 @@ export default function JobPage() {
     load();
   }, [id, router]);
 
+  async function handleCreateQuote() {
+    if (!job || creatingQuote) {
+      return;
+    }
+
+    setCreatingQuote(true);
+    setError("");
+
+    try {
+      const createdQuote = await createQuote(
+        job.id,
+        job.jobNumber,
+      );
+
+      setQuote(createdQuote);
+      router.push(`/jobs/${job.id}/quote`);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to create quote.",
+      );
+    } finally {
+      setCreatingQuote(false);
+    }
+  }
+
   async function changeStatus(status: JobStatus) {
-    if (!job) return;
+    if (!job) {
+      return;
+    }
 
     setSaving(true);
     setError("");
@@ -86,7 +131,9 @@ export default function JobPage() {
       | "completion_date",
     value: string,
   ) {
-    if (!job) return;
+    if (!job) {
+      return;
+    }
 
     setSaving(true);
     setError("");
@@ -126,7 +173,7 @@ export default function JobPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-[#f4f4f1] px-6 py-10 text-[11px] text-black/40">
-        Loading job…
+        Loading job...
       </div>
     );
   }
@@ -233,24 +280,49 @@ export default function JobPage() {
             </Card>
 
             <Card title="Quote">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-[12px] text-black/45">
-                    No quote attached
+              {quote ? (
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <div className="font-mono text-[11px] text-black/55">
+                      {quote.quoteNumber}
+                    </div>
+
+                    <div className="mt-1 text-[10px] text-black/35">
+                      Revision {quote.revision} · {quote.status}
+                    </div>
                   </div>
 
-                  <div className="mt-1 text-[10px] text-black/25">
-                    Create a quote from this Jobcard.
-                  </div>
+                  <Link
+                    href={`/jobs/${job.id}/quote`}
+                    className="rounded-md border border-black/[0.1] bg-white px-3 py-2 text-[10px] text-black/55 hover:bg-black/[0.025]"
+                  >
+                    Open quote →
+                  </Link>
                 </div>
+              ) : (
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <div className="text-[12px] text-black/45">
+                      No quote attached
+                    </div>
 
-                <button
-                  type="button"
-                  className="rounded-md border border-black/[0.1] bg-white px-3 py-2 text-[10px] text-black/55 hover:bg-black/[0.025]"
-                >
-                  + Create quote
-                </button>
-              </div>
+                    <div className="mt-1 text-[10px] text-black/25">
+                      Create a quote from this Jobcard.
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={creatingQuote}
+                    onClick={handleCreateQuote}
+                    className="rounded-md border border-black/[0.1] bg-white px-3 py-2 text-[10px] text-black/55 hover:bg-black/[0.025] disabled:cursor-wait disabled:opacity-50"
+                  >
+                    {creatingQuote
+                      ? "Creating..."
+                      : "+ Create quote"}
+                  </button>
+                </div>
+              )}
             </Card>
 
             <Card title="Files">
@@ -318,10 +390,26 @@ export default function JobPage() {
 
             <Card title="Job details">
               <div className="space-y-4">
-                <Detail label="Customer" value={job.customer} />
-                <Detail label="Site" value={job.address} />
-                <Detail label="Status" value={job.status} />
-                <Detail label="Job number" value={job.jobNumber} mono />
+                <Detail
+                  label="Customer"
+                  value={job.customer}
+                />
+
+                <Detail
+                  label="Site"
+                  value={job.address}
+                />
+
+                <Detail
+                  label="Status"
+                  value={job.status}
+                />
+
+                <Detail
+                  label="Job number"
+                  value={job.jobNumber}
+                  mono
+                />
               </div>
             </Card>
           </aside>
@@ -346,7 +434,9 @@ function Card({
         </h2>
       </div>
 
-      <div className="p-5">{children}</div>
+      <div className="p-5">
+        {children}
+      </div>
     </section>
   );
 }
