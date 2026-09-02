@@ -11,6 +11,7 @@ import {
   getFlashingTypes,
   getLabourTypes,
   getAccessories,
+  getMaterialPrices,
   type Profile,
   type ProfileOption,
   type Material,
@@ -19,6 +20,7 @@ import {
   type FlashingType,
   type LabourType,
   type Accessory,
+  type MaterialPrice,
 } from "@/lib/quote-options";
 
 type Tab =
@@ -41,15 +43,6 @@ type CatalogueTable =
   | "accessories"
   | "material_prices";
 
-type MaterialPrice = {
-  id: string;
-  materialId: string;
-  profileId: string;
-  profileOptionId: string;
-  colourId: string | null;
-  unitCost: number;
-  active: boolean;
-};
 
 const tabs: { id: Tab; label: string }[] = [
   { id: "profiles", label: "Profiles" },
@@ -222,36 +215,41 @@ export default function CataloguePage() {
   }
 
   async function loadPrices(): Promise<MaterialPrice[]> {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const headers: Record<string, string> = {};
+    try {
+      return await getMaterialPrices();
+    } catch {
+      // Fallback to /api/catalogue if direct client call encounters restricted RLS
+      const { data: sessionData } = await supabase.auth.getSession();
+      const headers: Record<string, string> = {};
 
-    if (sessionData?.session?.access_token) {
-      headers["Authorization"] = `Bearer ${sessionData.session.access_token}`;
+      if (sessionData?.session?.access_token) {
+        headers["Authorization"] = `Bearer ${sessionData.session.access_token}`;
+      }
+
+      const response = await fetch("/api/catalogue?table=material_prices", {
+        cache: "no-store",
+        headers,
+      });
+
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          result?.error ||
+            `Unable to load material prices (${response.status}).`,
+        );
+      }
+
+      return (result?.data ?? []).map((row: Record<string, unknown>) => ({
+        id: String(row.id),
+        materialId: String(row.material_id),
+        profileId: String(row.profile_id),
+        profileOptionId: String(row.profile_option_id),
+        colourId: row.colour_id ? String(row.colour_id) : null,
+        unitCost: Number(row.unit_cost),
+        active: Boolean(row.active),
+      }));
     }
-
-    const response = await fetch("/api/catalogue?table=material_prices", {
-      cache: "no-store",
-      headers,
-    });
-
-    const result = await response.json().catch(() => null);
-
-    if (!response.ok) {
-      throw new Error(
-        result?.error ||
-          `Unable to load material prices (${response.status}).`,
-      );
-    }
-
-    return (result?.data ?? []).map((row: Record<string, unknown>) => ({
-      id: String(row.id),
-      materialId: String(row.material_id),
-      profileId: String(row.profile_id),
-      profileOptionId: String(row.profile_option_id),
-      colourId: row.colour_id ? String(row.colour_id) : null,
-      unitCost: Number(row.unit_cost),
-      active: Boolean(row.active),
-    }));
   }
 
   async function loadProfileOptions(profileId: string) {
