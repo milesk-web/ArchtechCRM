@@ -14,20 +14,53 @@ const TABLES = new Set([
   "material_prices",
 ]);
 
-async function authorised() {
+async function authorised(request: Request) {
+  // 1. Check Microsoft OAuth session (used by OneDrive / Microsoft integration)
   const session = await getSession();
-
-  if (!session?.user) {
-    return null;
+  if (session?.user) {
+    return true;
   }
 
-  return session;
+  // 2. Validate Supabase Auth token if present in Authorization header
+  const authHeader = request.headers.get("authorization");
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.substring(7).trim();
+    if (token) {
+      const { data, error } = await supabaseAdmin.auth.getUser(token);
+      if (!error && data?.user) {
+        return true;
+      }
+    }
+  }
+
+  // 3. Check for active Supabase Auth session via cookies
+  const cookieHeader = request.headers.get("cookie");
+  if (cookieHeader) {
+    const accessCookieMatch = cookieHeader.match(/sb-[a-zA-Z0-9]+-auth-token=([^;]+)/);
+    if (accessCookieMatch) {
+      try {
+        const rawValue = decodeURIComponent(accessCookieMatch[1]);
+        const parsed = JSON.parse(rawValue);
+        const token = Array.isArray(parsed) ? parsed[0] : parsed?.access_token || parsed;
+        if (typeof token === "string" && token) {
+          const { data, error } = await supabaseAdmin.auth.getUser(token);
+          if (!error && data?.user) {
+            return true;
+          }
+        }
+      } catch {
+        // Fall back to checking Bearer token validation
+      }
+    }
+  }
+
+  return false;
 }
 
 export async function GET(request: Request) {
-  const session = await authorised();
+  const isAllowed = await authorised(request);
 
-  if (!session) {
+  if (!isAllowed) {
     return NextResponse.json(
       { error: "Authentication required." },
       { status: 401 },
@@ -116,9 +149,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const session = await authorised();
+  const isAllowed = await authorised(request);
 
-  if (!session) {
+  if (!isAllowed) {
     return NextResponse.json(
       { error: "Authentication required." },
       { status: 401 },
@@ -164,9 +197,9 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const session = await authorised();
+  const isAllowed = await authorised(request);
 
-  if (!session) {
+  if (!isAllowed) {
     return NextResponse.json(
       { error: "Authentication required." },
       { status: 401 },
