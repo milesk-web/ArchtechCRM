@@ -36,20 +36,42 @@ async function authorised(request: Request) {
   // 3. Check for active Supabase Auth session via cookies
   const cookieHeader = request.headers.get("cookie");
   if (cookieHeader) {
-    const accessCookieMatch = cookieHeader.match(/sb-[a-zA-Z0-9]+-auth-token=([^;]+)/);
-    if (accessCookieMatch) {
+    const tokens: string[] = [];
+
+    // Match standard Supabase auth cookie pattern sb-<project-ref>-auth-token or sb-access-token / sb-provider-token
+    const matches = cookieHeader.matchAll(/sb-[a-zA-Z0-9_-]+-auth-token(?:[.-]\d+)?=([^;]+)/g);
+    for (const match of matches) {
       try {
-        const rawValue = decodeURIComponent(accessCookieMatch[1]);
+        const rawValue = decodeURIComponent(match[1]);
         const parsed = JSON.parse(rawValue);
         const token = Array.isArray(parsed) ? parsed[0] : parsed?.access_token || parsed;
         if (typeof token === "string" && token) {
-          const { data, error } = await supabaseAdmin.auth.getUser(token);
-          if (!error && data?.user) {
-            return true;
-          }
+          tokens.push(token);
         }
       } catch {
-        // Fall back to checking Bearer token validation
+        if (match[1]) tokens.push(match[1]);
+      }
+    }
+
+    // Also check generic supabase cookies
+    const genericMatch = cookieHeader.match(/supabase-auth-token=([^;]+)/);
+    if (genericMatch) {
+      try {
+        const rawValue = decodeURIComponent(genericMatch[1]);
+        const parsed = JSON.parse(rawValue);
+        const token = Array.isArray(parsed) ? parsed[0] : parsed?.access_token || parsed;
+        if (typeof token === "string" && token) {
+          tokens.push(token);
+        }
+      } catch {
+        if (genericMatch[1]) tokens.push(genericMatch[1]);
+      }
+    }
+
+    for (const token of tokens) {
+      const { data, error } = await supabaseAdmin.auth.getUser(token);
+      if (!error && data?.user) {
+        return true;
       }
     }
   }
