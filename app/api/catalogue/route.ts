@@ -14,20 +14,75 @@ const TABLES = new Set([
   "material_prices",
 ]);
 
-async function authorised() {
+async function authorised(request: Request) {
+  // 1. Check Microsoft OAuth session (used by OneDrive / Microsoft integration)
   const session = await getSession();
-
-  if (!session?.user) {
-    return null;
+  if (session?.user) {
+    return true;
   }
 
-  return session;
+  // 2. Validate Supabase Auth token if present in Authorization header
+  const authHeader = request.headers.get("authorization");
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.substring(7).trim();
+    if (token) {
+      const { data, error } = await supabaseAdmin.auth.getUser(token);
+      if (!error && data?.user) {
+        return true;
+      }
+    }
+  }
+
+  // 3. Check for active Supabase Auth session via cookies
+  const cookieHeader = request.headers.get("cookie");
+  if (cookieHeader) {
+    const tokens: string[] = [];
+
+    // Match standard Supabase auth cookie pattern sb-<project-ref>-auth-token or sb-access-token / sb-provider-token
+    const matches = cookieHeader.matchAll(/sb-[a-zA-Z0-9_-]+-auth-token(?:[.-]\d+)?=([^;]+)/g);
+    for (const match of matches) {
+      try {
+        const rawValue = decodeURIComponent(match[1]);
+        const parsed = JSON.parse(rawValue);
+        const token = Array.isArray(parsed) ? parsed[0] : parsed?.access_token || parsed;
+        if (typeof token === "string" && token) {
+          tokens.push(token);
+        }
+      } catch {
+        if (match[1]) tokens.push(match[1]);
+      }
+    }
+
+    // Also check generic supabase cookies
+    const genericMatch = cookieHeader.match(/supabase-auth-token=([^;]+)/);
+    if (genericMatch) {
+      try {
+        const rawValue = decodeURIComponent(genericMatch[1]);
+        const parsed = JSON.parse(rawValue);
+        const token = Array.isArray(parsed) ? parsed[0] : parsed?.access_token || parsed;
+        if (typeof token === "string" && token) {
+          tokens.push(token);
+        }
+      } catch {
+        if (genericMatch[1]) tokens.push(genericMatch[1]);
+      }
+    }
+
+    for (const token of tokens) {
+      const { data, error } = await supabaseAdmin.auth.getUser(token);
+      if (!error && data?.user) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 export async function GET(request: Request) {
-  const session = await authorised();
+  const isAllowed = await authorised(request);
 
-  if (!session) {
+  if (!isAllowed) {
     return NextResponse.json(
       { error: "Authentication required." },
       { status: 401 },
@@ -116,9 +171,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const session = await authorised();
+  const isAllowed = await authorised(request);
 
-  if (!session) {
+  if (!isAllowed) {
     return NextResponse.json(
       { error: "Authentication required." },
       { status: 401 },
@@ -164,9 +219,9 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const session = await authorised();
+  const isAllowed = await authorised(request);
 
-  if (!session) {
+  if (!isAllowed) {
     return NextResponse.json(
       { error: "Authentication required." },
       { status: 401 },
