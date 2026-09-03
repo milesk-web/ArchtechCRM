@@ -1,24 +1,16 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import {
-  getProfiles,
-  getProfileOptions,
-  getMaterials,
-  getMaterialColours,
-  getUnderlays,
-  getFlashingTypes,
-  getLabourTypes,
-  getAccessories,
-  type Profile,
-  type ProfileOption,
-  type Material,
-  type MaterialColour,
-  type Underlay,
-  type FlashingType,
-  type LabourType,
-  type Accessory,
+import type {
+  Profile,
+  ProfileOption,
+  Material,
+  MaterialColour,
+  Underlay,
+  FlashingType,
+  LabourType,
+  Accessory,
 } from "@/lib/quote-options";
 
 type Tab =
@@ -64,6 +56,139 @@ const tabs: { id: Tab; label: string }[] = [
 const inputClass =
   "w-full rounded-md border border-black/[0.09] bg-white px-3 py-2 text-[11px] text-black/60 outline-none focus:border-black/25";
 
+async function fetchCatalogueApi(
+  table: CatalogueTable,
+  params?: Record<string, string>,
+): Promise<Record<string, unknown>[]> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const headers: Record<string, string> = {};
+
+  if (sessionData?.session?.access_token) {
+    headers["Authorization"] = `Bearer ${sessionData.session.access_token}`;
+  }
+
+  const queryParams = new URLSearchParams({ table, ...params });
+  const response = await fetch(`/api/catalogue?${queryParams.toString()}`, {
+    cache: "no-store",
+    headers,
+  });
+
+  const result = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(
+      result?.error || `Unable to load ${table} (${response.status}).`,
+    );
+  }
+
+  return result?.data ?? [];
+}
+
+async function loadProfiles(): Promise<Profile[]> {
+  const data = await fetchCatalogueApi("profiles");
+  return data.map((row: Record<string, unknown>) => ({
+    id: String(row.id),
+    name: String(row.name),
+    section: String(row.section),
+    measurementType: row.measurement_type as "gauge" | "width",
+    sortOrder: Number(row.sort_order),
+  }));
+}
+
+async function loadProfileOptions(profileId?: string): Promise<ProfileOption[]> {
+  const params: Record<string, string> = {};
+  if (profileId) {
+    params.profile_id = profileId;
+  }
+  const data = await fetchCatalogueApi("profile_options", params);
+  return data.map((row: Record<string, unknown>) => ({
+    id: String(row.id),
+    profileId: String(row.profile_id),
+    value: String(row.value),
+    sortOrder: Number(row.sort_order),
+  }));
+}
+
+async function loadMaterials(): Promise<Material[]> {
+  const data = await fetchCatalogueApi("materials");
+  return data.map((row: Record<string, unknown>) => ({
+    id: String(row.id),
+    name: String(row.name),
+    sortOrder: Number(row.sort_order),
+  }));
+}
+
+async function loadMaterialColours(materialId?: string): Promise<MaterialColour[]> {
+  const params: Record<string, string> = {};
+  if (materialId) {
+    params.material_id = materialId;
+  }
+  const data = await fetchCatalogueApi("material_colours", params);
+  return data.map((row: Record<string, unknown>) => ({
+    id: String(row.id),
+    materialId: String(row.material_id),
+    name: String(row.name),
+    sortOrder: Number(row.sort_order),
+  }));
+}
+
+async function loadUnderlays(): Promise<Underlay[]> {
+  const data = await fetchCatalogueApi("underlays");
+  return data.map((row: Record<string, unknown>) => ({
+    id: String(row.id),
+    name: String(row.name),
+    unit: String(row.unit ?? ""),
+    unitCost: row.unit_cost != null ? Number(row.unit_cost) : null,
+    sortOrder: Number(row.sort_order),
+  }));
+}
+
+async function loadFlashingTypes(): Promise<FlashingType[]> {
+  const data = await fetchCatalogueApi("flashing_types");
+  return data.map((row: Record<string, unknown>) => ({
+    id: String(row.id),
+    name: String(row.name),
+    unit: String(row.unit ?? ""),
+    unitCost: row.unit_cost != null ? Number(row.unit_cost) : null,
+    sortOrder: Number(row.sort_order),
+  }));
+}
+
+async function loadLabourTypes(): Promise<LabourType[]> {
+  const data = await fetchCatalogueApi("labour_types");
+  return data.map((row: Record<string, unknown>) => ({
+    id: String(row.id),
+    name: String(row.name),
+    unit: String(row.unit ?? ""),
+    rate: row.rate != null ? Number(row.rate) : null,
+    sortOrder: Number(row.sort_order),
+  }));
+}
+
+async function loadAccessories(): Promise<Accessory[]> {
+  const data = await fetchCatalogueApi("accessories");
+  return data.map((row: Record<string, unknown>) => ({
+    id: String(row.id),
+    name: String(row.name),
+    unit: String(row.unit ?? ""),
+    unitCost: row.unit_cost != null ? Number(row.unit_cost) : null,
+    sortOrder: Number(row.sort_order),
+  }));
+}
+
+async function loadPrices(): Promise<MaterialPrice[]> {
+  const data = await fetchCatalogueApi("material_prices");
+  return data.map((row: Record<string, unknown>) => ({
+    id: String(row.id),
+    materialId: String(row.material_id),
+    profileId: String(row.profile_id),
+    profileOptionId: String(row.profile_option_id),
+    colourId: row.colour_id ? String(row.colour_id) : null,
+    unitCost: Number(row.unit_cost),
+    active: Boolean(row.active),
+  }));
+}
+
 export default function CataloguePage() {
   const [tab, setTab] = useState<Tab>("profiles");
   const [loading, setLoading] = useState(true);
@@ -72,10 +197,10 @@ export default function CataloguePage() {
 
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [profileOptions, setProfileOptions] = useState<ProfileOption[]>([]);
+  const [allProfileOptions, setAllProfileOptions] = useState<ProfileOption[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
-  const [materialColours, setMaterialColours] = useState<MaterialColour[]>(
-    [],
-  );
+  const [materialColours, setMaterialColours] = useState<MaterialColour[]>([]);
+  const [allMaterialColours, setAllMaterialColours] = useState<MaterialColour[]>([]);
   const [underlays, setUnderlays] = useState<Underlay[]>([]);
   const [flashings, setFlashings] = useState<FlashingType[]>([]);
   const [labour, setLabour] = useState<LabourType[]>([]);
@@ -104,46 +229,118 @@ export default function CataloguePage() {
   const [pricingColour, setPricingColour] = useState("");
   const [pricingCost, setPricingCost] = useState("");
 
+  const [pricingOptions, setPricingOptions] = useState<ProfileOption[]>([]);
+  const [pricingColours, setPricingColours] = useState<MaterialColour[]>([]);
+
   useEffect(() => {
     void load();
   }, []);
 
   useEffect(() => {
+    let ignore = false;
     if (selectedProfile) {
-      void loadProfileOptions(selectedProfile);
+      loadProfileOptions(selectedProfile)
+        .then((opts) => {
+          if (!ignore) setProfileOptions(opts);
+        })
+        .catch((err) => {
+          if (!ignore)
+            setError(
+              err instanceof Error
+                ? err.message
+                : "Unable to load profile options.",
+            );
+        });
     } else {
-      setProfileOptions([]);
+      Promise.resolve().then(() => {
+        if (!ignore) setProfileOptions([]);
+      });
     }
+    return () => {
+      ignore = true;
+    };
   }, [selectedProfile]);
 
   useEffect(() => {
+    let ignore = false;
     if (selectedMaterial) {
-      void loadMaterialColours(selectedMaterial);
+      loadMaterialColours(selectedMaterial)
+        .then((cols) => {
+          if (!ignore) setMaterialColours(cols);
+        })
+        .catch((err) => {
+          if (!ignore)
+            setError(
+              err instanceof Error
+                ? err.message
+                : "Unable to load material colours.",
+            );
+        });
     } else {
-      setMaterialColours([]);
+      Promise.resolve().then(() => {
+        if (!ignore) setMaterialColours([]);
+      });
     }
+    return () => {
+      ignore = true;
+    };
   }, [selectedMaterial]);
 
   useEffect(() => {
+    let ignore = false;
     if (pricingProfile) {
-      void loadPricingOptions(pricingProfile);
+      loadProfileOptions(pricingProfile)
+        .then((opts) => {
+          if (!ignore) setPricingOptions(opts);
+        })
+        .catch((err) => {
+          if (!ignore)
+            setError(
+              err instanceof Error
+                ? err.message
+                : "Unable to load pricing options.",
+            );
+        });
     } else {
-      setPricingOptions([]);
-      setPricingOption("");
+      Promise.resolve().then(() => {
+        if (!ignore) {
+          setPricingOptions([]);
+          setPricingOption("");
+        }
+      });
     }
+    return () => {
+      ignore = true;
+    };
   }, [pricingProfile]);
 
   useEffect(() => {
+    let ignore = false;
     if (pricingMaterial) {
-      void loadPricingColours(pricingMaterial);
+      loadMaterialColours(pricingMaterial)
+        .then((cols) => {
+          if (!ignore) setPricingColours(cols);
+        })
+        .catch((err) => {
+          if (!ignore)
+            setError(
+              err instanceof Error
+                ? err.message
+                : "Unable to load pricing colours.",
+            );
+        });
     } else {
-      setPricingColours([]);
-      setPricingColour("");
+      Promise.resolve().then(() => {
+        if (!ignore) {
+          setPricingColours([]);
+          setPricingColour("");
+        }
+      });
     }
+    return () => {
+      ignore = true;
+    };
   }, [pricingMaterial]);
-
-  const [pricingOptions, setPricingOptions] = useState<ProfileOption[]>([]);
-  const [pricingColours, setPricingColours] = useState<MaterialColour[]>([]);
 
   const pricingProfiles = useMemo(() => {
     if (!pricingMaterial) return profiles;
@@ -183,14 +380,18 @@ export default function CataloguePage() {
         labourData,
         accessoriesData,
         pricesData,
+        allOptionsData,
+        allColoursData,
       ] = await Promise.all([
-        getProfiles(),
-        getMaterials(),
-        getUnderlays(),
-        getFlashingTypes(),
-        getLabourTypes(),
-        getAccessories(),
+        loadProfiles(),
+        loadMaterials(),
+        loadUnderlays(),
+        loadFlashingTypes(),
+        loadLabourTypes(),
+        loadAccessories(),
         loadPrices(),
+        loadProfileOptions(),
+        loadMaterialColours(),
       ]);
 
       setProfiles(profilesData);
@@ -200,6 +401,8 @@ export default function CataloguePage() {
       setLabour(labourData);
       setAccessories(accessoriesData);
       setPrices(pricesData);
+      setAllProfileOptions(allOptionsData);
+      setAllMaterialColours(allColoursData);
 
       if (!selectedProfile && profilesData.length > 0) {
         setSelectedProfile(profilesData[0].id);
@@ -221,42 +424,9 @@ export default function CataloguePage() {
     }
   }
 
-  async function loadPrices(): Promise<MaterialPrice[]> {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const headers: Record<string, string> = {};
-
-    if (sessionData?.session?.access_token) {
-      headers["Authorization"] = `Bearer ${sessionData.session.access_token}`;
-    }
-
-    const response = await fetch("/api/catalogue?table=material_prices", {
-      cache: "no-store",
-      headers,
-    });
-
-    const result = await response.json().catch(() => null);
-
-    if (!response.ok) {
-      throw new Error(
-        result?.error ||
-          `Unable to load material prices (${response.status}).`,
-      );
-    }
-
-    return (result?.data ?? []).map((row: Record<string, unknown>) => ({
-      id: String(row.id),
-      materialId: String(row.material_id),
-      profileId: String(row.profile_id),
-      profileOptionId: String(row.profile_option_id),
-      colourId: row.colour_id ? String(row.colour_id) : null,
-      unitCost: Number(row.unit_cost),
-      active: Boolean(row.active),
-    }));
-  }
-
-  async function loadProfileOptions(profileId: string) {
+  async function fetchProfileOptions(profileId: string) {
     try {
-      setProfileOptions(await getProfileOptions(profileId));
+      setProfileOptions(await loadProfileOptions(profileId));
     } catch (err) {
       setError(
         err instanceof Error
@@ -266,9 +436,9 @@ export default function CataloguePage() {
     }
   }
 
-  async function loadMaterialColours(materialId: string) {
+  async function fetchMaterialColours(materialId: string) {
     try {
-      setMaterialColours(await getMaterialColours(materialId));
+      setMaterialColours(await loadMaterialColours(materialId));
     } catch (err) {
       setError(
         err instanceof Error
@@ -278,9 +448,9 @@ export default function CataloguePage() {
     }
   }
 
-  async function loadPricingOptions(profileId: string) {
+  async function fetchPricingOptions(profileId: string) {
     try {
-      setPricingOptions(await getProfileOptions(profileId));
+      setPricingOptions(await loadProfileOptions(profileId));
     } catch (err) {
       setError(
         err instanceof Error
@@ -290,9 +460,9 @@ export default function CataloguePage() {
     }
   }
 
-  async function loadPricingColours(materialId: string) {
+  async function fetchPricingColours(materialId: string) {
     try {
-      setPricingColours(await getMaterialColours(materialId));
+      setPricingColours(await loadMaterialColours(materialId));
     } catch (err) {
       setError(
         err instanceof Error
@@ -435,7 +605,8 @@ export default function CataloguePage() {
     if (!created) return;
 
     setProfileOption("");
-    await loadProfileOptions(selectedProfile);
+    await fetchProfileOptions(selectedProfile);
+    setAllProfileOptions(await loadProfileOptions());
   }
 
   async function addMaterial() {
@@ -472,7 +643,8 @@ export default function CataloguePage() {
     if (!created) return;
 
     setColourName("");
-    await loadMaterialColours(selectedMaterial);
+    await fetchMaterialColours(selectedMaterial);
+    setAllMaterialColours(await loadMaterialColours());
   }
 
   async function addSimpleItem() {
@@ -612,19 +784,19 @@ export default function CataloguePage() {
     await load();
 
     if (selectedProfile) {
-      await loadProfileOptions(selectedProfile);
+      await fetchProfileOptions(selectedProfile);
     }
 
     if (selectedMaterial) {
-      await loadMaterialColours(selectedMaterial);
+      await fetchMaterialColours(selectedMaterial);
     }
 
     if (pricingProfile) {
-      await loadPricingOptions(pricingProfile);
+      await fetchPricingOptions(pricingProfile);
     }
 
     if (pricingMaterial) {
-      await loadPricingColours(pricingMaterial);
+      await fetchPricingColours(pricingMaterial);
     }
     return true;
   }
@@ -662,9 +834,6 @@ export default function CataloguePage() {
       (item) => item.materialId === price.materialId,
     );
   }
-
-  const allProfileOptions = profileOptions;
-  const allMaterialColours = materialColours;
 
   return (
     <main className="min-h-screen bg-[#f4f4f1] text-[#242422]">
@@ -798,7 +967,7 @@ export default function CataloguePage() {
                             </div>
 
                             <div className="mt-1 text-[9px] uppercase tracking-[0.12em] text-black/25">
-                              {profile.section} Â·{" "}
+                              {profile.section} ·{" "}
                               {profile.measurementType === "gauge"
                                 ? "Gauge"
                                 : "Width"}
@@ -1049,7 +1218,7 @@ export default function CataloguePage() {
                     />
 
                     <Input
-                      label="Unit cost / mÂ²"
+                      label="Unit cost / m²"
                       value={pricingCost}
                       onChange={setPricingCost}
                       placeholder="e.g. 18.50"
@@ -1127,7 +1296,7 @@ export default function CataloguePage() {
                                 currency: "NZD",
                               }).format(price.unitCost)}
                               <span className="ml-1 text-[9px] text-black/25">
-                                / mÂ²
+                                / m²
                               </span>
                             </div>
 
@@ -1350,7 +1519,7 @@ function SimplePanel({
           label="Unit"
           value={itemUnit}
           onChange={setItemUnit}
-          placeholder={tab === "labour" ? "hour" : "mÂ² / lm / item"}
+          placeholder={tab === "labour" ? "hour" : "m² / lm / item"}
         />
 
         <Input
@@ -1378,12 +1547,12 @@ function SimplePanel({
                 </div>
 
                 <div className="font-mono text-[10px] text-black/30">
-                  {record.unit || "â€”"}
+                  {record.unit || "—"}
                 </div>
 
                 <div className="text-right font-mono text-[10px] text-black/40">
                   {cost == null
-                    ? "â€”"
+                    ? "—"
                     : new Intl.NumberFormat("en-NZ", {
                         style: "currency",
                         currency: "NZD",
@@ -1405,11 +1574,3 @@ function SimplePanel({
     </Panel>
   );
 }
-
-
-
-
-
-
-
-

@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { getJobs, type Job } from "@/lib/jobs";
 
+export const dynamic = "force-dynamic";
+
 export default async function Home() {
   const jobs = await getJobs();
   const attention = jobs.filter((job) => job.attention.length > 0);
