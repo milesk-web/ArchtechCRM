@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { getJobs, type Job, type JobStatus } from "@/lib/jobs";
 
+export const dynamic = "force-dynamic";
+
 const filters: Array<"All" | JobStatus> = [
   "All",
   "Opportunity",
