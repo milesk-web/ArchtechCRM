@@ -62,16 +62,6 @@ export type Accessory = {
   sortOrder: number;
 };
 
-export type MaterialPrice = {
-  id: string;
-  materialId: string;
-  profileId: string;
-  profileOptionId: string;
-  colourId: string | null;
-  unitCost: number;
-  active: boolean;
-};
-
 async function fetchActive<T>(
   table: string,
   mapRow: (row: any) => T,
@@ -128,29 +118,6 @@ export function getMaterials(): Promise<Material[]> {
     id: row.id,
     name: row.name,
     sortOrder: row.sort_order,
-  }));
-}
-
-export async function getMaterialPrices(): Promise<MaterialPrice[]> {
-  const { data, error } = await supabase
-    .from("material_prices")
-    .select("*")
-    .eq("active", true)
-    .order("material_id", { ascending: true })
-    .order("profile_id", { ascending: true });
-
-  if (error) {
-    throw new Error(`Unable to load material_prices: ${error.message}`);
-  }
-
-  return (data ?? []).map((row: any) => ({
-    id: String(row.id),
-    materialId: String(row.material_id),
-    profileId: String(row.profile_id),
-    profileOptionId: String(row.profile_option_id),
-    colourId: row.colour_id ? String(row.colour_id) : null,
-    unitCost: Number(row.unit_cost),
-    active: Boolean(row.active),
   }));
 }
 

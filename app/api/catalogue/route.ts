@@ -21,7 +21,7 @@ async function authorised(request: Request) {
     return true;
   }
 
-  // 2. Validate Supabase Auth User JWT token if present in Authorization header
+  // 2. Validate Supabase Auth token if present in Authorization header
   const authHeader = request.headers.get("authorization");
   if (authHeader && authHeader.startsWith("Bearer ")) {
     const token = authHeader.substring(7).trim();
@@ -38,6 +38,7 @@ async function authorised(request: Request) {
   if (cookieHeader) {
     const tokens: string[] = [];
 
+    // Match standard Supabase auth cookie pattern sb-<project-ref>-auth-token or sb-access-token / sb-provider-token
     const matches = cookieHeader.matchAll(/sb-[a-zA-Z0-9_-]+-auth-token(?:[.-]\d+)?=([^;]+)/g);
     for (const match of matches) {
       try {
@@ -52,6 +53,7 @@ async function authorised(request: Request) {
       }
     }
 
+    // Also check generic supabase cookies
     const genericMatch = cookieHeader.match(/supabase-auth-token=([^;]+)/);
     if (genericMatch) {
       try {

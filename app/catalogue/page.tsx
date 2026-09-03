@@ -11,7 +11,6 @@ import {
   getFlashingTypes,
   getLabourTypes,
   getAccessories,
-  getMaterialPrices,
   type Profile,
   type ProfileOption,
   type Material,
@@ -20,7 +19,6 @@ import {
   type FlashingType,
   type LabourType,
   type Accessory,
-  type MaterialPrice,
 } from "@/lib/quote-options";
 
 type Tab =
@@ -43,6 +41,15 @@ type CatalogueTable =
   | "accessories"
   | "material_prices";
 
+type MaterialPrice = {
+  id: string;
+  materialId: string;
+  profileId: string;
+  profileOptionId: string;
+  colourId: string | null;
+  unitCost: number;
+  active: boolean;
+};
 
 const tabs: { id: Tab; label: string }[] = [
   { id: "profiles", label: "Profiles" },
@@ -169,14 +176,14 @@ export default function CataloguePage() {
 
     try {
       const [
-        profilesData,
-        materialsData,
-        underlaysData,
-        flashingsData,
-        labourData,
-        accessoriesData,
-        pricesData,
-      ] = await Promise.all([
+        profilesResult,
+        materialsResult,
+        underlaysResult,
+        flashingsResult,
+        labourResult,
+        accessoriesResult,
+        pricesResult,
+      ] = await Promise.allSettled([
         getProfiles(),
         getMaterials(),
         getUnderlays(),
@@ -186,24 +193,61 @@ export default function CataloguePage() {
         loadPrices(),
       ]);
 
-      setProfiles(profilesData);
-      setMaterials(materialsData);
-      setUnderlays(underlaysData);
-      setFlashings(flashingsData);
-      setLabour(labourData);
-      setAccessories(accessoriesData);
-      setPrices(pricesData);
+      const errors: string[] = [];
 
-      if (!selectedProfile && profilesData.length > 0) {
-        setSelectedProfile(profilesData[0].id);
+      if (profilesResult.status === "fulfilled") {
+        setProfiles(profilesResult.value);
+        if (!selectedProfile && profilesResult.value.length > 0) {
+          setSelectedProfile(profilesResult.value[0].id);
+        }
+      } else {
+        errors.push(`Profiles: ${profilesResult.reason?.message || "Failed to load"}`);
       }
 
-      if (!selectedMaterial && materialsData.length > 0) {
-        setSelectedMaterial(materialsData[0].id);
+      if (materialsResult.status === "fulfilled") {
+        setMaterials(materialsResult.value);
+        if (!selectedMaterial && materialsResult.value.length > 0) {
+          setSelectedMaterial(materialsResult.value[0].id);
+        }
+        if (!pricingMaterial && materialsResult.value.length > 0) {
+          setPricingMaterial(materialsResult.value[0].id);
+        }
+      } else {
+        errors.push(`Materials: ${materialsResult.reason?.message || "Failed to load"}`);
       }
 
-      if (!pricingMaterial && materialsData.length > 0) {
-        setPricingMaterial(materialsData[0].id);
+      if (underlaysResult.status === "fulfilled") {
+        setUnderlays(underlaysResult.value);
+      } else {
+        errors.push(`Underlays: ${underlaysResult.reason?.message || "Failed to load"}`);
+      }
+
+      if (flashingsResult.status === "fulfilled") {
+        setFlashings(flashingsResult.value);
+      } else {
+        errors.push(`Flashings: ${flashingsResult.reason?.message || "Failed to load"}`);
+      }
+
+      if (labourResult.status === "fulfilled") {
+        setLabour(labourResult.value);
+      } else {
+        errors.push(`Labour: ${labourResult.reason?.message || "Failed to load"}`);
+      }
+
+      if (accessoriesResult.status === "fulfilled") {
+        setAccessories(accessoriesResult.value);
+      } else {
+        errors.push(`Accessories: ${accessoriesResult.reason?.message || "Failed to load"}`);
+      }
+
+      if (pricesResult.status === "fulfilled") {
+        setPrices(pricesResult.value);
+      } else {
+        errors.push(`Material Prices: ${pricesResult.reason?.message || "Failed to load"}`);
+      }
+
+      if (errors.length > 0) {
+        setError(errors.join(" | "));
       }
     } catch (err) {
       setError(
@@ -215,41 +259,36 @@ export default function CataloguePage() {
   }
 
   async function loadPrices(): Promise<MaterialPrice[]> {
-    try {
-      return await getMaterialPrices();
-    } catch {
-      // Fallback to /api/catalogue if direct client call encounters restricted RLS
-      const { data: sessionData } = await supabase.auth.getSession();
-      const headers: Record<string, string> = {};
+    const { data: sessionData } = await supabase.auth.getSession();
+    const headers: Record<string, string> = {};
 
-      if (sessionData?.session?.access_token) {
-        headers["Authorization"] = `Bearer ${sessionData.session.access_token}`;
-      }
-
-      const response = await fetch("/api/catalogue?table=material_prices", {
-        cache: "no-store",
-        headers,
-      });
-
-      const result = await response.json().catch(() => null);
-
-      if (!response.ok) {
-        throw new Error(
-          result?.error ||
-            `Unable to load material prices (${response.status}).`,
-        );
-      }
-
-      return (result?.data ?? []).map((row: Record<string, unknown>) => ({
-        id: String(row.id),
-        materialId: String(row.material_id),
-        profileId: String(row.profile_id),
-        profileOptionId: String(row.profile_option_id),
-        colourId: row.colour_id ? String(row.colour_id) : null,
-        unitCost: Number(row.unit_cost),
-        active: Boolean(row.active),
-      }));
+    if (sessionData?.session?.access_token) {
+      headers["Authorization"] = `Bearer ${sessionData.session.access_token}`;
     }
+
+    const response = await fetch("/api/catalogue?table=material_prices", {
+      cache: "no-store",
+      headers,
+    });
+
+    const result = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      throw new Error(
+        result?.error ||
+          `Unable to load material prices (${response.status}).`,
+      );
+    }
+
+    return (result?.data ?? []).map((row: Record<string, unknown>) => ({
+      id: String(row.id),
+      materialId: String(row.material_id),
+      profileId: String(row.profile_id),
+      profileOptionId: String(row.profile_option_id),
+      colourId: row.colour_id ? String(row.colour_id) : null,
+      unitCost: Number(row.unit_cost),
+      active: Boolean(row.active),
+    }));
   }
 
   async function loadProfileOptions(profileId: string) {
