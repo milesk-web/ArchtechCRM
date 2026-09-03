@@ -4,8 +4,16 @@ let clientInstance: SupabaseClient | null = null;
 
 export function getSupabase(): SupabaseClient {
   if (!clientInstance) {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder.supabase.co";
-    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "placeholder-key";
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl) {
+      throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
+    }
+
+    if (!supabaseKey) {
+      throw new Error("Missing NEXT_PUBLIC_SUPABASE_ANON_KEY");
+    }
 
     clientInstance = createClient(supabaseUrl, supabaseKey);
   }
