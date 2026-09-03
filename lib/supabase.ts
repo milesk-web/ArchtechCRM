@@ -1,17 +1,21 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+let clientInstance: SupabaseClient | null = null;
 
-if (!supabaseUrl) {
-  throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
+export function getSupabase(): SupabaseClient {
+  if (!clientInstance) {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder.supabase.co";
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "placeholder-key";
+
+    clientInstance = createClient(supabaseUrl, supabaseKey);
+  }
+  return clientInstance;
 }
 
-if (!supabaseKey) {
-  throw new Error("Missing NEXT_PUBLIC_SUPABASE_ANON_KEY");
-}
-
-export const supabase = createClient(
-  supabaseUrl,
-  supabaseKey,
-);
+export const supabase = new Proxy({} as SupabaseClient, {
+  get(_target, prop: keyof SupabaseClient) {
+    const client = getSupabase();
+    const val = client[prop];
+    return typeof val === "function" ? val.bind(client) : val;
+  },
+});
