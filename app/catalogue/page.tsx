@@ -43,6 +43,11 @@ type MaterialPrice = {
   active: boolean;
 };
 
+type AuthState =
+  | { status: "loading" }
+  | { status: "authenticated"; name: string; email: string }
+  | { status: "unauthenticated" };
+
 const tabs: { id: Tab; label: string }[] = [
   { id: "profiles", label: "Profiles" },
   { id: "materials", label: "Materials" },
@@ -195,6 +200,8 @@ export default function CataloguePage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
+  const [authState, setAuthState] = useState<AuthState>({ status: "loading" });
+
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [profileOptions, setProfileOptions] = useState<ProfileOption[]>([]);
   const [allProfileOptions, setAllProfileOptions] = useState<ProfileOption[]>([]);
@@ -233,6 +240,29 @@ export default function CataloguePage() {
   const [pricingColours, setPricingColours] = useState<MaterialColour[]>([]);
 
   useEffect(() => {
+    async function checkAuth() {
+      try {
+        const response = await fetch("/api/auth/microsoft/me");
+        const data = (await response.json()) as {
+          authenticated?: boolean;
+          user?: { name: string; email: string };
+        };
+
+        if (data.authenticated && data.user) {
+          setAuthState({
+            status: "authenticated",
+            name: data.user.name,
+            email: data.user.email,
+          });
+        } else {
+          setAuthState({ status: "unauthenticated" });
+        }
+      } catch {
+        setAuthState({ status: "unauthenticated" });
+      }
+    }
+
+    void checkAuth();
     void load();
   }, []);
 
@@ -854,19 +884,54 @@ export default function CataloguePage() {
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={() => void load()}
-              className="rounded-md border border-black/[0.09] bg-white px-3 py-2 text-[10px] text-black/50 hover:bg-black/[0.025]"
-            >
-              Refresh
-            </button>
+            <div className="flex items-center gap-3">
+              {authState.status === "authenticated" && (
+                <div className="hidden text-right sm:block">
+                  <div className="text-[10px] text-black/50">{authState.name}</div>
+                  <div className="text-[9px] text-black/30">{authState.email}</div>
+                </div>
+              )}
+
+              {authState.status === "unauthenticated" && (
+                <a
+                  href="/api/auth/microsoft/login"
+                  className="rounded-md border border-black/[0.12] bg-white px-3 py-2 text-[10px] font-medium text-black/70 hover:border-black/25"
+                >
+                  Sign in with Microsoft →
+                </a>
+              )}
+
+              <button
+                type="button"
+                onClick={() => void load()}
+                className="rounded-md border border-black/[0.09] bg-white px-3 py-2 text-[10px] text-black/50 hover:bg-black/[0.025]"
+              >
+                Refresh
+              </button>
+            </div>
           </div>
         </div>
 
         {error && (
-          <div className="mb-5 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-[11px] text-red-700">
-            {error}
+          <div className="mb-5 rounded-md border border-red-200 bg-red-50 p-4 text-[11px] text-red-700">
+            <div className="font-medium">{error}</div>
+
+            {(error.includes("401") ||
+              error.toLowerCase().includes("authentication required") ||
+              authState.status === "unauthenticated") && (
+              <div className="mt-3 flex items-center gap-3">
+                <a
+                  href="/api/auth/microsoft/login"
+                  className="inline-block rounded-md bg-red-700 px-3.5 py-2 text-[10px] font-medium text-white transition hover:bg-red-800"
+                >
+                  Sign in with Microsoft →
+                </a>
+
+                <span className="text-[10px] text-red-600/80">
+                  Sign in to load or modify Catalogue options.
+                </span>
+              </div>
+            )}
           </div>
         )}
 

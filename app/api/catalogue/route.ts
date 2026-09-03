@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSession } from "@/lib/auth/session";
+import { decryptSession, getSession } from "@/lib/auth/session";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 
 const TABLES = new Set([
@@ -14,11 +14,115 @@ const TABLES = new Set([
   "material_prices",
 ]);
 
+function parseCookies(cookieHeader: string): Record<string, string> {
+  const map: Record<string, string> = {};
+  const pairs = cookieHeader.split(";");
+  for (const pair of pairs) {
+    const eqIdx = pair.indexOf("=");
+    if (eqIdx === -1) continue;
+    const name = pair.slice(0, eqIdx).trim();
+    const value = pair.slice(eqIdx + 1).trim();
+    if (name) map[name] = value;
+  }
+  return map;
+}
+
+function extractSupabaseTokensFromCookieHeader(cookieHeader: string): string[] {
+  const tokens: string[] = [];
+  const cookiesMap = parseCookies(cookieHeader);
+
+  const assembled: Record<string, string> = {};
+  const chunkGroups: Record<string, Map<number, string>> = {};
+
+  for (const [name, val] of Object.entries(cookiesMap)) {
+    const chunkMatch = name.match(/^(sb-[a-zA-Z0-9_-]+-auth-token|supabase-auth-token)\.(\d+)$/);
+    if (chunkMatch) {
+      const baseName = chunkMatch[1];
+      const index = parseInt(chunkMatch[2], 10);
+      if (!chunkGroups[baseName]) {
+        chunkGroups[baseName] = new Map();
+      }
+      chunkGroups[baseName].set(index, val);
+    } else if (name.startsWith("sb-") || name === "supabase-auth-token") {
+      assembled[name] = val;
+    }
+  }
+
+  for (const [baseName, map] of Object.entries(chunkGroups)) {
+    const sortedIndices = Array.from(map.keys()).sort((a, b) => a - b);
+    const combined = sortedIndices.map((i) => map.get(i)!).join("");
+    assembled[baseName] = combined;
+  }
+
+  for (const rawVal of Object.values(assembled)) {
+    try {
+      let value = decodeURIComponent(rawVal);
+      if (value.startsWith("base64-")) {
+        const b64 = value.slice(7);
+        value = Buffer.from(b64, "base64").toString("utf-8");
+      }
+
+      const parsed = JSON.parse(value);
+      let token: string | null = null;
+      if (Array.isArray(parsed)) {
+        token = typeof parsed[0] === "string" ? parsed[0] : null;
+      } else if (typeof parsed === "object" && parsed !== null) {
+        token =
+          parsed.access_token ||
+          parsed.currentSession?.access_token ||
+          parsed.session?.access_token ||
+          null;
+      } else if (typeof parsed === "string") {
+        token = parsed;
+      }
+
+      if (token && typeof token === "string") {
+        tokens.push(token);
+      }
+    } catch {
+      if (rawVal && !rawVal.startsWith("base64-")) {
+        tokens.push(rawVal);
+      }
+    }
+  }
+
+  return tokens;
+}
+
 async function authorised(request: Request) {
   // 1. Check Microsoft OAuth session (used by OneDrive / Microsoft integration)
-  const session = await getSession();
-  if (session?.user) {
-    return true;
+  try {
+    const session = await getSession();
+    if (session?.user) {
+      return true;
+    }
+  } catch {
+    // Continue to next check if getSession throws
+  }
+
+  const cookieHeader = request.headers.get("cookie");
+
+  if (cookieHeader) {
+    const cookiesMap = parseCookies(cookieHeader);
+    let rawArchtech = cookiesMap["archtech_session"];
+    if (!rawArchtech) {
+      const chunks: string[] = [];
+      let i = 0;
+      while (cookiesMap[`archtech_session.${i}`]) {
+        chunks.push(cookiesMap[`archtech_session.${i}`]);
+        i++;
+      }
+      if (chunks.length > 0) {
+        rawArchtech = chunks.join("");
+      }
+    }
+
+    if (rawArchtech) {
+      const session = await decryptSession(rawArchtech);
+      if (session?.user) {
+        return true;
+      }
+    }
   }
 
   // 2. Validate Supabase Auth token if present in Authorization header
@@ -34,40 +138,8 @@ async function authorised(request: Request) {
   }
 
   // 3. Check for active Supabase Auth session via cookies
-  const cookieHeader = request.headers.get("cookie");
   if (cookieHeader) {
-    const tokens: string[] = [];
-
-    // Match standard Supabase auth cookie pattern sb-<project-ref>-auth-token or sb-access-token / sb-provider-token
-    const matches = cookieHeader.matchAll(/sb-[a-zA-Z0-9_-]+-auth-token(?:[.-]\d+)?=([^;]+)/g);
-    for (const match of matches) {
-      try {
-        const rawValue = decodeURIComponent(match[1]);
-        const parsed = JSON.parse(rawValue);
-        const token = Array.isArray(parsed) ? parsed[0] : parsed?.access_token || parsed;
-        if (typeof token === "string" && token) {
-          tokens.push(token);
-        }
-      } catch {
-        if (match[1]) tokens.push(match[1]);
-      }
-    }
-
-    // Also check generic supabase cookies
-    const genericMatch = cookieHeader.match(/supabase-auth-token=([^;]+)/);
-    if (genericMatch) {
-      try {
-        const rawValue = decodeURIComponent(genericMatch[1]);
-        const parsed = JSON.parse(rawValue);
-        const token = Array.isArray(parsed) ? parsed[0] : parsed?.access_token || parsed;
-        if (typeof token === "string" && token) {
-          tokens.push(token);
-        }
-      } catch {
-        if (genericMatch[1]) tokens.push(genericMatch[1]);
-      }
-    }
-
+    const tokens = extractSupabaseTokensFromCookieHeader(cookieHeader);
     for (const token of tokens) {
       const { data, error } = await supabaseAdmin.auth.getUser(token);
       if (!error && data?.user) {
