@@ -9,6 +9,8 @@ const TABLES = new Set([
   "material_colours",
   "underlays",
   "flashing_types",
+  "flashing_girth_bands",
+  "flashing_prices",
   "labour_types",
   "accessories",
   "material_prices",
@@ -107,6 +109,17 @@ export async function GET(request: Request) {
         .eq("active", true)
         .order("material_id", { ascending: true })
         .order("profile_id", { ascending: true });
+    } else if (table === "flashing_girth_bands") {
+      query = query
+        .eq("active", true)
+        .order("flashing_type_id", { ascending: true })
+        .order("sort_order", { ascending: true })
+        .order("min_girth", { ascending: true });
+    } else if (table === "flashing_prices") {
+      query = query
+        .eq("active", true)
+        .order("flashing_girth_band_id", { ascending: true })
+        .order("material_id", { ascending: true });
     } else {
       query = query
         .eq("active", true)
@@ -144,6 +157,31 @@ export async function GET(request: Request) {
 
       if (colourId) {
         query = query.eq("colour_id", colourId);
+      }
+    }
+
+    if (table === "flashing_girth_bands") {
+      const flashingTypeId = url.searchParams.get("flashing_type_id");
+
+      if (flashingTypeId) {
+        query = query.eq("flashing_type_id", flashingTypeId);
+      }
+    }
+
+    if (table === "flashing_prices") {
+      const flashingGirthBandId = url.searchParams.get(
+        "flashing_girth_band_id",
+      );
+
+      if (flashingGirthBandId) {
+        query = query.eq(
+          "flashing_girth_band_id",
+          flashingGirthBandId,
+        );
+      }
+
+      if (materialId) {
+        query = query.eq("material_id", materialId);
       }
     }
 

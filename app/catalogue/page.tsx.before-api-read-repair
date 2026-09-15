@@ -1,7 +1,16 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabase";
 import {
+  getProfiles,
+  getProfileOptions,
+  getMaterials,
+  getMaterialColours,
+  getUnderlays,
+  getFlashingTypes,
+  getLabourTypes,
+  getAccessories,
   type Profile,
   type ProfileOption,
   type Material,
@@ -28,8 +37,6 @@ type CatalogueTable =
   | "material_colours"
   | "underlays"
   | "flashing_types"
-  | "flashing_girth_bands"
-  | "flashing_prices"
   | "labour_types"
   | "accessories"
   | "material_prices";
@@ -40,23 +47,6 @@ type MaterialPrice = {
   profileId: string;
   profileOptionId: string;
   colourId: string | null;
-  unitCost: number;
-  active: boolean;
-};
-
-type FlashingGirthBand = {
-  id: string;
-  flashingTypeId: string;
-  minGirth: number;
-  maxGirth: number;
-  active: boolean;
-  sortOrder: number;
-};
-
-type FlashingPrice = {
-  id: string;
-  flashingGirthBandId: string;
-  materialId: string;
   unitCost: number;
   active: boolean;
 };
@@ -92,16 +82,6 @@ export default function CataloguePage() {
   const [accessories, setAccessories] = useState<Accessory[]>([]);
   const [prices, setPrices] = useState<MaterialPrice[]>([]);
 
-  const [flashingBands, setFlashingBands] = useState<FlashingGirthBand[]>([]);
-  const [flashingPrices, setFlashingPrices] = useState<FlashingPrice[]>([]);
-
-  const [selectedFlashingType, setSelectedFlashingType] = useState("");
-  const [flashingMinGirth, setFlashingMinGirth] = useState("");
-  const [flashingMaxGirth, setFlashingMaxGirth] = useState("");
-  const [selectedFlashingBand, setSelectedFlashingBand] = useState("");
-  const [flashingPriceMaterial, setFlashingPriceMaterial] = useState("");
-  const [flashingPriceCost, setFlashingPriceCost] = useState("");
-
   const [selectedProfile, setSelectedProfile] = useState("");
   const [selectedMaterial, setSelectedMaterial] = useState("");
 
@@ -123,9 +103,6 @@ export default function CataloguePage() {
   const [pricingOption, setPricingOption] = useState("");
   const [pricingColour, setPricingColour] = useState("");
   const [pricingCost, setPricingCost] = useState("");
-
-  const [pricingOptions, setPricingOptions] = useState<ProfileOption[]>([]);
-  const [pricingColours, setPricingColours] = useState<MaterialColour[]>([]);
 
   useEffect(() => {
     void load();
@@ -165,22 +142,8 @@ export default function CataloguePage() {
     }
   }, [pricingMaterial]);
 
-  useEffect(() => {
-    if (selectedFlashingType) {
-      void loadFlashingBandsFor(selectedFlashingType);
-    } else {
-      setFlashingBands([]);
-      setSelectedFlashingBand("");
-    }
-  }, [selectedFlashingType]);
-
-  useEffect(() => {
-    if (selectedFlashingBand) {
-      void loadFlashingPricesFor(selectedFlashingBand);
-    } else {
-      setFlashingPrices([]);
-    }
-  }, [selectedFlashingBand]);
+  const [pricingOptions, setPricingOptions] = useState<ProfileOption[]>([]);
+  const [pricingColours, setPricingColours] = useState<MaterialColour[]>([]);
 
   const pricingProfiles = useMemo(() => {
     if (!pricingMaterial) return profiles;
@@ -220,18 +183,14 @@ export default function CataloguePage() {
         labourData,
         accessoriesData,
         pricesData,
-        flashingBandsData,
-        flashingPricesData,
       ] = await Promise.all([
-        loadProfiles(),
-        loadMaterials(),
-        loadUnderlays(),
-        loadFlashings(),
-        loadLabour(),
-        loadAccessories(),
+        getProfiles(),
+        getMaterials(),
+        getUnderlays(),
+        getFlashingTypes(),
+        getLabourTypes(),
+        getAccessories(),
         loadPrices(),
-        loadFlashingBands(),
-        loadFlashingPrices(),
       ]);
 
       setProfiles(profilesData);
@@ -241,40 +200,6 @@ export default function CataloguePage() {
       setLabour(labourData);
       setAccessories(accessoriesData);
       setPrices(pricesData);
-      setFlashingBands(flashingBandsData);
-      setFlashingPrices(flashingPricesData);
-
-      if (
-        (!selectedFlashingType ||
-          !flashingsData.some(
-            (flashing) => flashing.id === selectedFlashingType,
-          )) &&
-        flashingsData.length > 0
-      ) {
-        setSelectedFlashingType(flashingsData[0].id);
-      }
-
-      if (
-        selectedFlashingType &&
-        !flashingsData.some(
-          (flashing) => flashing.id === selectedFlashingType,
-        )
-      ) {
-        setSelectedFlashingType(flashingsData[0]?.id ?? "");
-      }
-
-      if (
-        selectedFlashingBand &&
-        !flashingBandsData.some(
-          (band) => band.id === selectedFlashingBand,
-        )
-      ) {
-        setSelectedFlashingBand("");
-      }
-
-      if (!flashingPriceMaterial && materialsData.length > 0) {
-        setFlashingPriceMaterial(materialsData[0].id);
-      }
 
       if (!selectedProfile && profilesData.length > 0) {
         setSelectedProfile(profilesData[0].id);
@@ -294,201 +219,6 @@ export default function CataloguePage() {
     } finally {
       setLoading(false);
     }
-  }
-
-  async function fetchCatalogue<T>(
-    table: CatalogueTable,
-    mapRow: (row: Record<string, unknown>) => T,
-    params?: Record<string, string>,
-  ): Promise<T[]> {
-    const search = new URLSearchParams({ table });
-
-    if (params) {
-      for (const [key, value] of Object.entries(params)) {
-        search.set(key, value);
-      }
-    }
-
-    const response = await fetch(`/api/catalogue?${search.toString()}`, {
-      cache: "no-store",
-    });
-
-    const result = await response.json().catch(() => null);
-
-    if (!response.ok) {
-      throw new Error(
-        result?.error || `Unable to load ${table} (${response.status}).`,
-      );
-    }
-
-    return (result?.data ?? []).map((row: Record<string, unknown>) =>
-      mapRow(row),
-    );
-  }
-
-  async function loadProfiles(): Promise<Profile[]> {
-    return fetchCatalogue<Profile>("profiles", (row) => ({
-      id: String(row.id),
-      name: String(row.name),
-      section: String(row.section),
-      measurementType: row.measurement_type as "gauge" | "width",
-      sortOrder: Number(row.sort_order),
-    }));
-  }
-
-  async function loadMaterials(): Promise<Material[]> {
-    return fetchCatalogue<Material>("materials", (row) => ({
-      id: String(row.id),
-      name: String(row.name),
-      sortOrder: Number(row.sort_order),
-    }));
-  }
-
-  async function loadUnderlays(): Promise<Underlay[]> {
-    return fetchCatalogue<Underlay>("underlays", (row) => ({
-      id: String(row.id),
-      name: String(row.name),
-      unit: String(row.unit ?? ""),
-      unitCost: row.unit_cost == null ? null : Number(row.unit_cost),
-      sortOrder: Number(row.sort_order),
-    }));
-  }
-
-  async function loadFlashings(): Promise<FlashingType[]> {
-    return fetchCatalogue<FlashingType>("flashing_types", (row) => ({
-      id: String(row.id),
-      name: String(row.name),
-      unit: String(row.unit ?? ""),
-      unitCost: row.unit_cost == null ? null : Number(row.unit_cost),
-      sortOrder: Number(row.sort_order),
-    }));
-  }
-
-  async function loadFlashingBands(): Promise<FlashingGirthBand[]> {
-    return fetchCatalogue<FlashingGirthBand>(
-      "flashing_girth_bands",
-      (row) => ({
-        id: String(row.id),
-        flashingTypeId: String(row.flashing_type_id),
-        minGirth: Number(row.min_girth),
-        maxGirth: Number(row.max_girth),
-        active: Boolean(row.active),
-        sortOrder: Number(row.sort_order),
-      }),
-    );
-  }
-
-  async function loadFlashingPrices(): Promise<FlashingPrice[]> {
-    return fetchCatalogue<FlashingPrice>("flashing_prices", (row) => ({
-      id: String(row.id),
-      flashingGirthBandId: String(row.flashing_girth_band_id),
-      materialId: String(row.material_id),
-      unitCost: Number(row.unit_cost),
-      active: Boolean(row.active),
-    }));
-  }
-
-  async function loadFlashingBandsFor(typeId: string) {
-    try {
-      const bands = await fetchCatalogue<FlashingGirthBand>(
-        "flashing_girth_bands",
-        (row) => ({
-          id: String(row.id),
-          flashingTypeId: String(row.flashing_type_id),
-          minGirth: Number(row.min_girth),
-          maxGirth: Number(row.max_girth),
-          active: Boolean(row.active),
-          sortOrder: Number(row.sort_order),
-        }),
-        { flashing_type_id: typeId },
-      );
-
-      setFlashingBands(bands);
-
-      if (!bands.some((band) => band.id === selectedFlashingBand)) {
-        setSelectedFlashingBand(bands[0]?.id ?? "");
-      }
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to load flashing girth bands.",
-      );
-    }
-  }
-
-  async function loadFlashingPricesFor(bandId: string) {
-    try {
-      const pricesForBand = await fetchCatalogue<FlashingPrice>(
-        "flashing_prices",
-        (row) => ({
-          id: String(row.id),
-          flashingGirthBandId: String(row.flashing_girth_band_id),
-          materialId: String(row.material_id),
-          unitCost: Number(row.unit_cost),
-          active: Boolean(row.active),
-        }),
-        { flashing_girth_band_id: bandId },
-      );
-
-      setFlashingPrices(pricesForBand);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to load flashing prices.",
-      );
-    }
-  }
-
-  async function loadLabour(): Promise<LabourType[]> {
-    return fetchCatalogue<LabourType>("labour_types", (row) => ({
-      id: String(row.id),
-      name: String(row.name),
-      unit: String(row.unit ?? ""),
-      rate: row.rate == null ? null : Number(row.rate),
-      sortOrder: Number(row.sort_order),
-    }));
-  }
-
-  async function loadAccessories(): Promise<Accessory[]> {
-    return fetchCatalogue<Accessory>("accessories", (row) => ({
-      id: String(row.id),
-      name: String(row.name),
-      unit: String(row.unit ?? ""),
-      unitCost: row.unit_cost == null ? null : Number(row.unit_cost),
-      sortOrder: Number(row.sort_order),
-    }));
-  }
-
-  async function loadProfileOptionsFor(
-    profileId: string,
-  ): Promise<ProfileOption[]> {
-    return fetchCatalogue<ProfileOption>(
-      "profile_options",
-      (row) => ({
-        id: String(row.id),
-        profileId: String(row.profile_id),
-        value: String(row.value),
-        sortOrder: Number(row.sort_order),
-      }),
-      { profile_id: profileId },
-    );
-  }
-
-  async function loadMaterialColoursFor(
-    materialId: string,
-  ): Promise<MaterialColour[]> {
-    return fetchCatalogue<MaterialColour>(
-      "material_colours",
-      (row) => ({
-        id: String(row.id),
-        materialId: String(row.material_id),
-        name: String(row.name),
-        sortOrder: Number(row.sort_order),
-      }),
-      { material_id: materialId },
-    );
   }
 
   async function loadPrices(): Promise<MaterialPrice[]> {
@@ -518,7 +248,7 @@ export default function CataloguePage() {
 
   async function loadProfileOptions(profileId: string) {
     try {
-      setProfileOptions(await loadProfileOptionsFor(profileId));
+      setProfileOptions(await getProfileOptions(profileId));
     } catch (err) {
       setError(
         err instanceof Error
@@ -530,7 +260,7 @@ export default function CataloguePage() {
 
   async function loadMaterialColours(materialId: string) {
     try {
-      setMaterialColours(await loadMaterialColoursFor(materialId));
+      setMaterialColours(await getMaterialColours(materialId));
     } catch (err) {
       setError(
         err instanceof Error
@@ -542,7 +272,7 @@ export default function CataloguePage() {
 
   async function loadPricingOptions(profileId: string) {
     try {
-      setPricingOptions(await loadProfileOptionsFor(profileId));
+      setPricingOptions(await getProfileOptions(profileId));
     } catch (err) {
       setError(
         err instanceof Error
@@ -554,7 +284,7 @@ export default function CataloguePage() {
 
   async function loadPricingColours(materialId: string) {
     try {
-      setPricingColours(await loadMaterialColoursFor(materialId));
+      setPricingColours(await getMaterialColours(materialId));
     } catch (err) {
       setError(
         err instanceof Error
@@ -605,7 +335,6 @@ export default function CataloguePage() {
       return false;
     }
   }
-
   async function deleteCatalogueItem(
     table: CatalogueTable,
     id: string,
@@ -646,7 +375,6 @@ export default function CataloguePage() {
       return false;
     }
   }
-
   async function addProfile() {
     if (!profileName.trim()) {
       setError("Enter a profile name.");
@@ -732,9 +460,11 @@ export default function CataloguePage() {
     const sortOrder =
       tab === "underlays"
         ? underlays.length
-        : tab === "labour"
-          ? labour.length
-          : accessories.length;
+        : tab === "flashings"
+          ? flashings.length
+          : tab === "labour"
+            ? labour.length
+            : accessories.length;
 
     const numericCost =
       itemCost.trim() === "" ? null : Number(itemCost.trim());
@@ -747,9 +477,11 @@ export default function CataloguePage() {
     const table =
       tab === "underlays"
         ? "underlays"
-        : tab === "labour"
-          ? "labour_types"
-          : "accessories";
+        : tab === "flashings"
+          ? "flashing_types"
+          : tab === "labour"
+            ? "labour_types"
+            : "accessories";
 
     const data =
       tab === "labour"
@@ -777,130 +509,6 @@ export default function CataloguePage() {
     setItemCost("");
 
     await load();
-  }
-
-  async function addFlashingType() {
-    const name = window.prompt("Flashing type name");
-
-    if (!name?.trim()) {
-      return;
-    }
-
-    const created = await createCatalogueItem("flashing_types", {
-      name: name.trim(),
-      unit: "m",
-      unit_cost: null,
-      sort_order: flashings.length,
-      active: true,
-    });
-
-    if (!created) return;
-
-    await load();
-  }
-
-  async function addFlashingBand() {
-    if (!selectedFlashingType) {
-      setError("Select a flashing type.");
-      return;
-    }
-
-    if (flashingMinGirth.trim() === "" || flashingMaxGirth.trim() === "") {
-      setError("Enter both minimum and maximum girth.");
-      return;
-    }
-
-    const minGirth = Number(flashingMinGirth);
-    const maxGirth = Number(flashingMaxGirth);
-
-    if (
-      Number.isNaN(minGirth) ||
-      Number.isNaN(maxGirth) ||
-      minGirth < 0 ||
-      maxGirth < 0
-    ) {
-      setError("Girth values must be numbers greater than or equal to 0.");
-      return;
-    }
-
-    if (maxGirth < minGirth) {
-      setError("Maximum girth must be greater than or equal to minimum girth.");
-      return;
-    }
-
-    const existing = flashingBands.find(
-      (band) =>
-        band.minGirth === minGirth &&
-        band.maxGirth === maxGirth &&
-        band.flashingTypeId === selectedFlashingType,
-    );
-
-    if (existing) {
-      setError("That girth band already exists for this flashing type.");
-      return;
-    }
-
-    const created = await createCatalogueItem("flashing_girth_bands", {
-      flashing_type_id: selectedFlashingType,
-      min_girth: minGirth,
-      max_girth: maxGirth,
-      active: true,
-      sort_order: flashingBands.length,
-    });
-
-    if (!created) return;
-
-    setFlashingMinGirth("");
-    setFlashingMaxGirth("");
-
-    await loadFlashingBandsFor(selectedFlashingType);
-  }
-
-  async function addFlashingPrice() {
-    if (!selectedFlashingBand) {
-      setError("Select a girth band.");
-      return;
-    }
-
-    if (!flashingPriceMaterial) {
-      setError("Select a material.");
-      return;
-    }
-
-    if (flashingPriceCost.trim() === "") {
-      setError("Enter a price per metre.");
-      return;
-    }
-
-    const cost = Number(flashingPriceCost);
-
-    if (Number.isNaN(cost) || cost < 0) {
-      setError("Price must be a number greater than or equal to 0.");
-      return;
-    }
-
-    const existing = flashingPrices.find(
-      (price) =>
-        price.flashingGirthBandId === selectedFlashingBand &&
-        price.materialId === flashingPriceMaterial,
-    );
-
-    if (existing) {
-      setError("A price already exists for this material and girth band.");
-      return;
-    }
-
-    const created = await createCatalogueItem("flashing_prices", {
-      flashing_girth_band_id: selectedFlashingBand,
-      material_id: flashingPriceMaterial,
-      unit_cost: cost,
-      active: true,
-    });
-
-    if (!created) return;
-
-    setFlashingPriceCost("");
-    await loadFlashingPricesFor(selectedFlashingBand);
   }
 
   async function addPrice() {
@@ -970,10 +578,7 @@ export default function CataloguePage() {
     setPrices(refreshed);
   }
 
-  async function deleteItem(
-    table: CatalogueTable,
-    id: string,
-  ): Promise<boolean> {
+  async function deleteItem(table: CatalogueTable, id: string): Promise<boolean> {
     if (!window.confirm("Delete this item?")) return false;
 
     const deleted = await deleteCatalogueItem(table, id);
@@ -997,7 +602,6 @@ export default function CataloguePage() {
     if (pricingMaterial) {
       await loadPricingColours(pricingMaterial);
     }
-
     return true;
   }
 
@@ -1389,10 +993,7 @@ export default function CataloguePage() {
                       }}
                       options={[
                         ["", "Select material"],
-                        ...materials.map(
-                          (material) =>
-                            [material.id, material.name] as [string, string],
-                        ),
+                        ...materials.map((material) => [material.id, material.name] as [string, string]),
                       ]}
                     />
 
@@ -1405,10 +1006,7 @@ export default function CataloguePage() {
                       }}
                       options={[
                         ["", "Select profile"],
-                        ...pricingProfiles.map(
-                          (profile) =>
-                            [profile.id, profile.name] as [string, string],
-                        ),
+                        ...pricingProfiles.map((profile) => [profile.id, profile.name] as [string, string]),
                       ]}
                     />
 
@@ -1422,10 +1020,7 @@ export default function CataloguePage() {
                       onChange={setPricingOption}
                       options={[
                         ["", "Select value"],
-                        ...pricingOptions.map(
-                          (option) =>
-                            [option.id, option.value] as [string, string],
-                        ),
+                        ...pricingOptions.map((option) => [option.id, option.value] as [string, string]),
                       ]}
                     />
 
@@ -1445,10 +1040,7 @@ export default function CataloguePage() {
                         onChange={setPricingColour}
                         options={[
                           ["", "Select colour"],
-                          ...pricingColours.map(
-                            (colour) =>
-                              [colour.id, colour.name] as [string, string],
-                          ),
+                          ...pricingColours.map((colour) => [colour.id, colour.name] as [string, string]),
                         ]}
                       />
 
@@ -1536,38 +1128,13 @@ export default function CataloguePage() {
               </div>
             )}
 
-            {tab === "flashings" && (
-              <FlashingPanel
-                flashings={flashings}
-                flashingBands={flashingBands}
-                flashingPrices={flashingPrices}
-                materials={materials}
-                selectedFlashingType={selectedFlashingType}
-                setSelectedFlashingType={setSelectedFlashingType}
-                flashingMinGirth={flashingMinGirth}
-                setFlashingMinGirth={setFlashingMinGirth}
-                flashingMaxGirth={flashingMaxGirth}
-                setFlashingMaxGirth={setFlashingMaxGirth}
-                selectedFlashingBand={selectedFlashingBand}
-                setSelectedFlashingBand={setSelectedFlashingBand}
-                flashingPriceMaterial={flashingPriceMaterial}
-                setFlashingPriceMaterial={setFlashingPriceMaterial}
-                flashingPriceCost={flashingPriceCost}
-                setFlashingPriceCost={setFlashingPriceCost}
-                addFlashingType={addFlashingType}
-                addFlashingBand={addFlashingBand}
-                addFlashingPrice={addFlashingPrice}
-                deleteItem={deleteItem}
-              />
-            )}
-
             {tab !== "profiles" &&
               tab !== "materials" &&
-              tab !== "pricing" &&
-              tab !== "flashings" && (
+              tab !== "pricing" && (
                 <SimplePanel
                   tab={tab}
                   underlays={underlays}
+                  flashings={flashings}
                   labour={labour}
                   accessories={accessories}
                   itemName={itemName}
@@ -1678,313 +1245,10 @@ function Empty({ text }: { text: string }) {
   );
 }
 
-function FlashingPanel({
-  flashings,
-  flashingBands,
-  flashingPrices,
-  materials,
-  selectedFlashingType,
-  setSelectedFlashingType,
-  flashingMinGirth,
-  setFlashingMinGirth,
-  flashingMaxGirth,
-  setFlashingMaxGirth,
-  selectedFlashingBand,
-  setSelectedFlashingBand,
-  flashingPriceMaterial,
-  setFlashingPriceMaterial,
-  flashingPriceCost,
-  setFlashingPriceCost,
-  addFlashingType,
-  addFlashingBand,
-  addFlashingPrice,
-  deleteItem,
-}: {
-  flashings: FlashingType[];
-  flashingBands: FlashingGirthBand[];
-  flashingPrices: FlashingPrice[];
-  materials: Material[];
-  selectedFlashingType: string;
-  setSelectedFlashingType: (value: string) => void;
-  flashingMinGirth: string;
-  setFlashingMinGirth: (value: string) => void;
-  flashingMaxGirth: string;
-  setFlashingMaxGirth: (value: string) => void;
-  selectedFlashingBand: string;
-  setSelectedFlashingBand: (value: string) => void;
-  flashingPriceMaterial: string;
-  setFlashingPriceMaterial: (value: string) => void;
-  flashingPriceCost: string;
-  setFlashingPriceCost: (value: string) => void;
-  addFlashingType: () => void;
-  addFlashingBand: () => void;
-  addFlashingPrice: () => void;
-  deleteItem: (table: CatalogueTable, id: string) => Promise<boolean>;
-}) {
-  const selectedType = flashings.find(
-    (flashing) => flashing.id === selectedFlashingType,
-  );
-
-  const selectedBand = flashingBands.find(
-    (band) => band.id === selectedFlashingBand,
-  );
-
-  return (
-    <div className="space-y-5">
-      <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
-        <Panel
-          title="Flashing types"
-          action={
-            <button
-              type="button"
-              onClick={addFlashingType}
-              className="rounded-md bg-[#242422] px-3 py-2 text-[10px] text-white"
-            >
-              Add type
-            </button>
-          }
-        >
-          {flashings.length === 0 ? (
-            <Empty text="No flashing types yet." />
-          ) : (
-            <div className="divide-y divide-black/[0.06]">
-              {flashings.map((flashing) => (
-                <div
-                  key={flashing.id}
-                  className="flex items-center justify-between gap-3 py-3"
-                >
-                  <button
-                    type="button"
-                    onClick={() => setSelectedFlashingType(flashing.id)}
-                    className={
-                      selectedFlashingType === flashing.id
-                        ? "flex-1 rounded-md bg-black/[0.045] px-3 py-2 text-left"
-                        : "flex-1 rounded-md px-3 py-2 text-left hover:bg-black/[0.025]"
-                    }
-                  >
-                    <div className="text-[11px] text-black/65">
-                      {flashing.name}
-                    </div>
-
-                    <div className="mt-1 text-[9px] uppercase tracking-[0.12em] text-black/25">
-                      charged by metre
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void deleteItem("flashing_types", flashing.id)
-                    }
-                    className="text-[10px] text-black/20 hover:text-red-500"
-                  >
-                    Delete
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </Panel>
-
-        <Panel
-          title={
-            selectedType
-              ? `${selectedType.name} — girth bands`
-              : "Girth bands"
-          }
-        >
-          {!selectedFlashingType ? (
-            <Empty text="Select a flashing type." />
-          ) : (
-            <>
-              <div className="mb-5 grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
-                <Input
-                  label="Minimum girth"
-                  value={flashingMinGirth}
-                  onChange={setFlashingMinGirth}
-                  placeholder="e.g. 401"
-                />
-
-                <Input
-                  label="Maximum girth"
-                  value={flashingMaxGirth}
-                  onChange={setFlashingMaxGirth}
-                  placeholder="e.g. 450"
-                />
-
-                <div className="flex items-end">
-                  <button
-                    type="button"
-                    onClick={addFlashingBand}
-                    className="w-full rounded-md bg-[#242422] px-4 py-2 text-[10px] text-white sm:w-auto"
-                  >
-                    Add girth band
-                  </button>
-                </div>
-              </div>
-
-              {flashingBands.length === 0 ? (
-                <Empty text="No girth bands configured for this flashing type." />
-              ) : (
-                <div className="space-y-2">
-                  {flashingBands
-                    .slice()
-                    .sort((a, b) => {
-                      if (a.minGirth !== b.minGirth) {
-                        return a.minGirth - b.minGirth;
-                      }
-
-                      return a.maxGirth - b.maxGirth;
-                    })
-                    .map((band) => (
-                      <div
-                        key={band.id}
-                        className={
-                          selectedFlashingBand === band.id
-                            ? "flex items-center justify-between gap-4 rounded-md border border-black/[0.12] bg-white px-4 py-3"
-                            : "flex items-center justify-between gap-4 rounded-md border border-black/[0.06] bg-white px-4 py-3"
-                        }
-                      >
-                        <button
-                          type="button"
-                          onClick={() => setSelectedFlashingBand(band.id)}
-                          className="flex-1 text-left"
-                        >
-                          <div className="font-mono text-[11px] text-black/60">
-                            {band.minGirth}–{band.maxGirth}G
-                          </div>
-
-                          <div className="mt-1 text-[9px] text-black/25">
-                            Actual girth within this range uses this band.
-                          </div>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void deleteItem(
-                              "flashing_girth_bands",
-                              band.id,
-                            )
-                          }
-                          className="text-[10px] text-black/20 hover:text-red-500"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    ))}
-                </div>
-              )}
-            </>
-          )}
-        </Panel>
-      </div>
-
-      <Panel
-        title={
-          selectedBand
-            ? `${selectedBand.minGirth}–${selectedBand.maxGirth}G — material pricing`
-            : "Material pricing"
-        }
-      >
-        {!selectedFlashingBand ? (
-          <Empty text="Select a girth band." />
-        ) : (
-          <>
-            <div className="grid gap-4 md:grid-cols-[1fr_220px_auto]">
-              <Select
-                label="Material"
-                value={flashingPriceMaterial}
-                onChange={setFlashingPriceMaterial}
-                options={[
-                  ["", "Select material"],
-                  ...materials.map(
-                    (material) =>
-                      [material.id, material.name] as [string, string],
-                  ),
-                ]}
-              />
-
-              <Input
-                label="Price / m"
-                value={flashingPriceCost}
-                onChange={setFlashingPriceCost}
-                placeholder="e.g. 12.50"
-              />
-
-              <div className="flex items-end">
-                <button
-                  type="button"
-                  onClick={addFlashingPrice}
-                  className="w-full rounded-md bg-[#242422] px-4 py-2 text-[10px] text-white md:w-auto"
-                >
-                  Add price
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-5">
-              {flashingPrices.length === 0 ? (
-                <Empty text="No material prices entered for this girth band." />
-              ) : (
-                <div className="divide-y divide-black/[0.06]">
-                  {flashingPrices.map((price) => {
-                    const material = materials.find(
-                      (item) => item.id === price.materialId,
-                    );
-
-                    return (
-                      <div
-                        key={price.id}
-                        className="grid grid-cols-[1fr_120px_80px] items-center gap-4 py-3"
-                      >
-                        <div>
-                          <div className="text-[11px] text-black/60">
-                            {material?.name || "Unknown material"}
-                          </div>
-
-                          <div className="mt-1 text-[9px] text-black/25">
-                            {selectedBand
-                              ? `${selectedBand.minGirth}–${selectedBand.maxGirth}G`
-                              : "Girth band"}
-                          </div>
-                        </div>
-
-                        <div className="text-right font-mono text-[11px] text-black/55">
-                          {new Intl.NumberFormat("en-NZ", {
-                            style: "currency",
-                            currency: "NZD",
-                          }).format(price.unitCost)}
-                          <span className="ml-1 text-[9px] text-black/25">
-                            / m
-                          </span>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void deleteItem("flashing_prices", price.id)
-                          }
-                          className="text-right text-[10px] text-black/20 hover:text-red-500"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </>
-        )}
-      </Panel>
-    </div>
-  );
-}
-
 function SimplePanel({
   tab,
   underlays,
+  flashings,
   labour,
   accessories,
   itemName,
@@ -1998,6 +1262,7 @@ function SimplePanel({
 }: {
   tab: Tab;
   underlays: Underlay[];
+  flashings: FlashingType[];
   labour: LabourType[];
   accessories: Accessory[];
   itemName: string;
@@ -2012,23 +1277,29 @@ function SimplePanel({
   const title =
     tab === "underlays"
       ? "Underlays"
-      : tab === "labour"
-        ? "Labour"
-        : "Accessories";
+      : tab === "flashings"
+        ? "Flashings"
+        : tab === "labour"
+          ? "Labour"
+          : "Accessories";
 
   const records =
     tab === "underlays"
       ? underlays
-      : tab === "labour"
-        ? labour
-        : accessories;
+      : tab === "flashings"
+        ? flashings
+        : tab === "labour"
+          ? labour
+          : accessories;
 
   const table: CatalogueTable =
     tab === "underlays"
       ? "underlays"
-      : tab === "labour"
-        ? "labour_types"
-        : "accessories";
+      : tab === "flashings"
+        ? "flashing_types"
+        : tab === "labour"
+          ? "labour_types"
+          : "accessories";
 
   return (
     <Panel
@@ -2110,4 +1381,10 @@ function SimplePanel({
     </Panel>
   );
 }
+
+
+
+
+
+
 
