@@ -73,14 +73,18 @@ export async function decryptSession(
   }
 }
 
-export async function getSession(): Promise<SessionData | null> {
-  const cookieStore = await cookies();
-  const single = cookieStore.get(SESSION_COOKIE_PREFIX);
+export async function getSession(
+  requestOrCookieHeader?: Request | string | null,
+): Promise<SessionData | null> {
+  try {
+    const cookieStore = await cookies();
+    const single = cookieStore.get(SESSION_COOKIE_PREFIX);
 
-  let raw = "";
-  if (single?.value) {
-    raw = single.value;
-  } else {
+    if (single?.value) {
+      const decrypted = await decryptSession(single.value);
+      if (decrypted) return decrypted;
+    }
+
     const chunks: string[] = [];
     let i = 0;
     while (true) {
@@ -90,12 +94,53 @@ export async function getSession(): Promise<SessionData | null> {
       i++;
     }
     if (chunks.length > 0) {
-      raw = chunks.join("");
+      const decrypted = await decryptSession(chunks.join(""));
+      if (decrypted) return decrypted;
+    }
+  } catch {
+    // ignore cookies() store failure if outside context
+  }
+
+  if (requestOrCookieHeader) {
+    const header =
+      typeof requestOrCookieHeader === "string"
+        ? requestOrCookieHeader
+        : requestOrCookieHeader.headers?.get("cookie") ?? "";
+
+    if (header) {
+      const cookieMap: Record<string, string> = {};
+      header.split(";").forEach((part) => {
+        const eqIdx = part.indexOf("=");
+        if (eqIdx !== -1) {
+          const key = part.slice(0, eqIdx).trim();
+          const val = part.slice(eqIdx + 1).trim();
+          try {
+            cookieMap[key] = decodeURIComponent(val);
+          } catch {
+            cookieMap[key] = val;
+          }
+        }
+      });
+
+      if (cookieMap[SESSION_COOKIE_PREFIX]) {
+        const decrypted = await decryptSession(cookieMap[SESSION_COOKIE_PREFIX]);
+        if (decrypted) return decrypted;
+      }
+
+      const chunks: string[] = [];
+      let i = 0;
+      while (cookieMap[`${SESSION_COOKIE_PREFIX}.${i}`]) {
+        chunks.push(cookieMap[`${SESSION_COOKIE_PREFIX}.${i}`]);
+        i++;
+      }
+      if (chunks.length > 0) {
+        const decrypted = await decryptSession(chunks.join(""));
+        if (decrypted) return decrypted;
+      }
     }
   }
 
-  if (!raw) return null;
-  return decryptSession(raw);
+  return null;
 }
 
 export async function setSession(data: SessionData): Promise<void> {
