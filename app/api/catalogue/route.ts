@@ -18,7 +18,7 @@ const TABLES = new Set([
 
 async function authorised(request: Request) {
   // 1. Check Microsoft OAuth session (used by OneDrive / Microsoft integration)
-  const session = await getSession();
+  const session = await getSession(request);
   if (session?.user) {
     return true;
   }
