@@ -1,3 +1,4 @@
+import { requireSession } from "@/lib/auth/requireSession";
 import Link from "next/link";
 import { getJobs, type Job } from "@/lib/jobs";
 
