@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabase";
 import {
   type Profile,
   type ProfileOption,
@@ -309,8 +310,19 @@ export default function CataloguePage() {
       }
     }
 
+    const headers: Record<string, string> = {};
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (data?.session?.access_token) {
+        headers["Authorization"] = `Bearer ${data.session.access_token}`;
+      }
+    } catch {
+      // ignore
+    }
+
     const response = await fetch(`/api/catalogue?${search.toString()}`, {
       cache: "no-store",
+      headers,
     });
 
     const result = await response.json().catch(() => null);
@@ -492,8 +504,19 @@ export default function CataloguePage() {
   }
 
   async function loadPrices(): Promise<MaterialPrice[]> {
+    const headers: Record<string, string> = {};
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (data?.session?.access_token) {
+        headers["Authorization"] = `Bearer ${data.session.access_token}`;
+      }
+    } catch {
+      // ignore
+    }
+
     const response = await fetch("/api/catalogue?table=material_prices", {
       cache: "no-store",
+      headers,
     });
 
     const result = await response.json().catch(() => null);
@@ -572,11 +595,21 @@ export default function CataloguePage() {
     setNotice("");
 
     try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData?.session?.access_token) {
+          headers["Authorization"] = `Bearer ${sessionData.session.access_token}`;
+        }
+      } catch {
+        // ignore
+      }
+
       const response = await fetch("/api/catalogue", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers,
         body: JSON.stringify({
           table,
           data,
@@ -614,11 +647,21 @@ export default function CataloguePage() {
     setNotice("");
 
     try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData?.session?.access_token) {
+          headers["Authorization"] = `Bearer ${sessionData.session.access_token}`;
+        }
+      } catch {
+        // ignore
+      }
+
       const response = await fetch("/api/catalogue", {
         method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers,
         body: JSON.stringify({
           table,
           id,

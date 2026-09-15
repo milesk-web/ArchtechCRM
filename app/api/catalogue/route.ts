@@ -18,7 +18,7 @@ const TABLES = new Set([
 
 async function authorised(request: Request) {
   // 1. Check Microsoft OAuth session (used by OneDrive / Microsoft integration)
-  const session = await getSession();
+  const session = await getSession(request);
   if (session?.user) {
     return true;
   }
@@ -38,35 +38,56 @@ async function authorised(request: Request) {
   // 3. Check for active Supabase Auth session via cookies
   const cookieHeader = request.headers.get("cookie");
   if (cookieHeader) {
-    const tokens: string[] = [];
-
-    // Match standard Supabase auth cookie pattern sb-<project-ref>-auth-token or sb-access-token / sb-provider-token
-    const matches = cookieHeader.matchAll(/sb-[a-zA-Z0-9_-]+-auth-token(?:[.-]\d+)?=([^;]+)/g);
-    for (const match of matches) {
-      try {
-        const rawValue = decodeURIComponent(match[1]);
-        const parsed = JSON.parse(rawValue);
-        const token = Array.isArray(parsed) ? parsed[0] : parsed?.access_token || parsed;
-        if (typeof token === "string" && token) {
-          tokens.push(token);
+    const cookieMap: Record<string, string> = {};
+    cookieHeader.split(";").forEach((part) => {
+      const eqIdx = part.indexOf("=");
+      if (eqIdx !== -1) {
+        const key = part.slice(0, eqIdx).trim();
+        const val = part.slice(eqIdx + 1).trim();
+        try {
+          cookieMap[key] = decodeURIComponent(val);
+        } catch {
+          cookieMap[key] = val;
         }
-      } catch {
-        if (match[1]) tokens.push(match[1]);
       }
-    }
+    });
 
-    // Also check generic supabase cookies
-    const genericMatch = cookieHeader.match(/supabase-auth-token=([^;]+)/);
-    if (genericMatch) {
+    const tokens: string[] = [];
+    const baseNames = new Set<string>();
+    Object.keys(cookieMap).forEach((key) => {
+      baseNames.add(key.replace(/\.\d+$/, ""));
+    });
+
+    for (const base of baseNames) {
+      if (!base.startsWith("sb-") && !base.includes("supabase")) continue;
+
+      let fullVal = "";
+      if (cookieMap[base]) {
+        fullVal = cookieMap[base];
+      } else {
+        const chunks: string[] = [];
+        let i = 0;
+        while (cookieMap[`${base}.${i}`]) {
+          chunks.push(cookieMap[`${base}.${i}`]);
+          i++;
+        }
+        if (chunks.length > 0) {
+          fullVal = chunks.join("");
+        }
+      }
+
+      if (!fullVal) continue;
+
       try {
-        const rawValue = decodeURIComponent(genericMatch[1]);
-        const parsed = JSON.parse(rawValue);
-        const token = Array.isArray(parsed) ? parsed[0] : parsed?.access_token || parsed;
+        const parsed = JSON.parse(fullVal);
+        const token = Array.isArray(parsed)
+          ? parsed[0]
+          : parsed?.access_token || parsed;
         if (typeof token === "string" && token) {
           tokens.push(token);
         }
       } catch {
-        if (genericMatch[1]) tokens.push(genericMatch[1]);
+        tokens.push(fullVal);
       }
     }
 
