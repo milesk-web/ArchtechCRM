@@ -3,17 +3,15 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-
 import { getJob, type Job } from "@/lib/jobs";
 import {
-  createQuote,
   getQuoteForJob,
+  createQuote,
   getQuoteLines,
   saveQuoteLines,
   type Quote,
   type QuoteLine,
 } from "@/lib/quotes";
-
 import {
   getProfiles,
   getProfileOptions,
@@ -21,23 +19,32 @@ import {
   getMaterialColours,
   getUnderlays,
   getFlashingTypes,
+  getFlashingGirthBands,
+  getFlashingPrices,
+  getMaterialPrices,
   getLabourTypes,
   getAccessories,
+  getFlashingBand,
+  resolveFlashingUnitCost,
+  resolveMaterialUnitCost,
   type Profile,
   type ProfileOption,
   type Material,
   type MaterialColour,
   type Underlay,
   type FlashingType,
+  type FlashingGirthBand,
+  type FlashingPrice,
+  type MaterialPrice,
   type LabourType,
   type Accessory,
 } from "@/lib/quote-options";
 
-type ScopeName = "Roofing" | "Wall Cladding";
-type ScopeKey = "roofing" | "wall";
+type Section = "Roofing" | "Wall Cladding" | "Accessories";
 
 type ScopeState = {
   area: number;
+  linealMetres: number;
   profileId: string;
   profileOptionId: string;
   materialId: string;
@@ -48,6 +55,8 @@ type ScopeState = {
 type FlashingRow = {
   id: string;
   flashingTypeId: string;
+  customName: string;
+  girth: number;
   materialId: string;
   length: number;
   quantity: number;
@@ -58,6 +67,7 @@ type LabourRow = {
   labourTypeId: string;
   quantity: number;
   hours: number;
+  rate: number;
 };
 
 type AccessoryRow = {
@@ -66,32 +76,25 @@ type AccessoryRow = {
   quantity: number;
 };
 
-type MaterialPrice = {
-  id: string;
-  material_id: string;
-  profile_id: string;
-  profile_option_id: string;
-  colour_id: string | null;
-  unit_cost: number;
+type BudgetState = {
+  materialMarginPercent: number;
+  labourMarginPercent: number;
+  overheads: number;
+  delivery: number;
 };
 
-type FlashingGirthBand = {
-  id: string;
-  min_girth: number;
-  max_girth: number;
-  active: boolean;
-  sort_order: number;
+const emptyBudget: BudgetState = {
+  materialMarginPercent: 15,
+  labourMarginPercent: 15,
+  overheads: 0,
+  delivery: 0,
 };
 
-type FlashingPrice = {
-  id: string;
-  flashing_girth_band_id: string;
-  material_id: string;
-  unit_cost: number;
-};
+type ActiveSection = "roofing" | "wall" | "extras";
 
 const emptyScope: ScopeState = {
   area: 0,
+  linealMetres: 0,
   profileId: "",
   profileOptionId: "",
   materialId: "",
@@ -99,120 +102,57 @@ const emptyScope: ScopeState = {
   underlayId: "",
 };
 
-const inputClass =
-  "w-full rounded-md border border-black/[0.12] bg-white px-3 py-2 text-sm text-black outline-none focus:border-black/30";
-
-const numberInputClass =
-  "w-full rounded-md border border-black/[0.12] bg-white px-3 py-2 text-sm text-right text-black outline-none focus:border-black/30";
-
-function money(value: number | null | undefined) {
-  if (value == null || Number.isNaN(value)) return "—";
-
-  return new Intl.NumberFormat("en-NZ", {
-    style: "currency",
-    currency: "NZD",
-    minimumFractionDigits: 2,
-  }).format(value);
-}
-
-function numberValue(value: string) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-async function catalogueGet<T>(
-  table: string,
-  params?: Record<string, string | undefined>,
-): Promise<T[]> {
-  const search = new URLSearchParams({ table });
-
-  for (const [key, value] of Object.entries(params ?? {})) {
-    if (value) search.set(key, value);
-  }
-
-  const response = await fetch(`/api/catalogue?${search.toString()}`);
-
-  if (!response.ok) {
-    let message = `Unable to load ${table}.`;
-
-    try {
-      const body = await response.json();
-      if (body?.error) message = body.error;
-    } catch {
-      // Keep default message.
-    }
-
-    throw new Error(message);
-  }
-
-  const body = await response.json();
-
-  return (body?.data ?? []) as T[];
-}
+const CUSTOM_FLASHING = "__custom__";
 
 export default function QuotePage() {
   const params = useParams();
   const router = useRouter();
-
   const jobId = params.id as string;
 
   const [job, setJob] = useState<Job | null>(null);
   const [quote, setQuote] = useState<Quote | null>(null);
-
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
 
   const [roofProfiles, setRoofProfiles] = useState<Profile[]>([]);
   const [wallProfiles, setWallProfiles] = useState<Profile[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [underlays, setUnderlays] = useState<Underlay[]>([]);
   const [flashingTypes, setFlashingTypes] = useState<FlashingType[]>([]);
+  const [flashingBands, setFlashingBands] = useState<FlashingGirthBand[]>([]);
+  const [flashingPrices, setFlashingPrices] = useState<FlashingPrice[]>([]);
+  const [materialPrices, setMaterialPrices] = useState<MaterialPrice[]>([]);
   const [labourTypes, setLabourTypes] = useState<LabourType[]>([]);
-  const [accessories, setAccessories] = useState<Accessory[]>([]);
+  const [accessoryOptions, setAccessoryOptions] = useState<Accessory[]>([]);
 
-  const [profileOptions, setProfileOptions] = useState<
+  const [profileOptionsByProfile, setProfileOptionsByProfile] = useState<
     Record<string, ProfileOption[]>
   >({});
-
-  const [materialColours, setMaterialColours] = useState<
+  const [coloursByMaterial, setColoursByMaterial] = useState<
     Record<string, MaterialColour[]>
   >({});
 
-  const [materialPrices, setMaterialPrices] = useState<MaterialPrice[]>([]);
-  const [flashingBands, setFlashingBands] = useState<FlashingGirthBand[]>([]);
-  const [flashingPrices, setFlashingPrices] = useState<FlashingPrice[]>([]);
-
   const [roofing, setRoofing] = useState<ScopeState>(emptyScope);
-  const [wall, setWall] = useState<ScopeState>(emptyScope);
-
+  const [wallCladding, setWallCladding] = useState<ScopeState>(emptyScope);
   const [roofingFlashings, setRoofingFlashings] = useState<FlashingRow[]>([]);
-  const [wallFlashings, setWallFlashings] = useState<FlashingRow[]>([]);
-
   const [roofingLabour, setRoofingLabour] = useState<LabourRow[]>([]);
+  const [wallFlashings, setWallFlashings] = useState<FlashingRow[]>([]);
   const [wallLabour, setWallLabour] = useState<LabourRow[]>([]);
-
   const [accessoryRows, setAccessoryRows] = useState<AccessoryRow[]>([]);
+  const [budget, setBudget] = useState<BudgetState>(emptyBudget);
+  const [activeSection, setActiveSection] = useState<ActiveSection>("roofing");
 
   useEffect(() => {
-    let cancelled = false;
-
     async function load() {
       try {
-        setLoading(true);
-        setError("");
-
         const jobResult = await getJob(jobId);
-
         if (!jobResult) {
           router.replace("/jobs");
           return;
         }
 
         let quoteResult = await getQuoteForJob(jobId);
-
         if (!quoteResult) {
           quoteResult = await createQuote(jobId, jobResult.jobNumber);
         }
@@ -223,881 +163,650 @@ export default function QuotePage() {
           materialsResult,
           underlaysResult,
           flashingTypesResult,
+          flashingBandsResult,
+          flashingPricesResult,
+          materialPricesResult,
           labourTypesResult,
           accessoriesResult,
           existingLines,
-          pricesResult,
-          bandsResult,
-          flashingPricesResult,
         ] = await Promise.all([
           getProfiles("Roofing"),
           getProfiles("Wall Cladding"),
           getMaterials(),
           getUnderlays(),
           getFlashingTypes(),
+          getFlashingGirthBands(),
+          getFlashingPrices(),
+          getMaterialPrices(),
           getLabourTypes(),
           getAccessories(),
           getQuoteLines(quoteResult.id),
-          catalogueGet<MaterialPrice>("material_prices"),
-          catalogueGet<FlashingGirthBand>("flashing_girth_bands"),
-          catalogueGet<FlashingPrice>("flashing_prices"),
         ]);
-
-        if (cancelled) return;
 
         setJob(jobResult);
         setQuote(quoteResult);
-
         setRoofProfiles(roofProfilesResult);
         setWallProfiles(wallProfilesResult);
         setMaterials(materialsResult);
         setUnderlays(underlaysResult);
         setFlashingTypes(flashingTypesResult);
-        setLabourTypes(labourTypesResult);
-        setAccessories(accessoriesResult);
-
-        setMaterialPrices(pricesResult);
-        setFlashingBands(bandsResult);
+        setFlashingBands(flashingBandsResult);
         setFlashingPrices(flashingPricesResult);
+        setMaterialPrices(materialPricesResult);
+        setLabourTypes(labourTypesResult);
+        setAccessoryOptions(accessoriesResult);
 
-        await hydrateExistingLines(
-          existingLines,
-          roofProfilesResult,
-          wallProfilesResult,
-          materialsResult,
-        );
+        hydrateFromExistingLines(existingLines);
       } catch (err) {
-        if (!cancelled) {
-          setError(
-            err instanceof Error ? err.message : "Unable to load quote.",
-          );
-        }
+        setError(
+          err instanceof Error ? err.message : "Unable to load quote.",
+        );
       } finally {
-        if (!cancelled) setLoading(false);
+        setLoading(false);
       }
     }
 
     load();
-
-    return () => {
-      cancelled = true;
-    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId, router]);
 
-  async function hydrateExistingLines(
-    lines: QuoteLine[],
-    roofProfilesResult: Profile[],
-    wallProfilesResult: Profile[],
-    materialsResult: Material[],
-  ) {
-    const hydrateScope = async (
-      section: ScopeName,
-      setter: (value: ScopeState) => void,
-    ) => {
-      const materialLine = lines.find(
-        (line) =>
-          line.section === section &&
-          line.category === "Material" &&
-          line.metadata?.kind === "profile",
-      );
-
-      const underlayLine = lines.find(
-        (line) =>
-          line.section === section &&
-          line.category === "Material" &&
-          line.metadata?.kind === "underlay",
-      );
-
-      if (!materialLine && !underlayLine) return;
-
-      const profileId =
-        typeof materialLine?.metadata?.profileId === "string"
-          ? materialLine.metadata.profileId
-          : "";
-
-      const profileOptionId =
-        typeof materialLine?.metadata?.profileOptionId === "string"
-          ? materialLine.metadata.profileOptionId
-          : "";
-
-      const materialId =
-        typeof materialLine?.metadata?.materialId === "string"
-          ? materialLine.metadata.materialId
-          : "";
-
-      const colourId =
-        typeof materialLine?.metadata?.colourId === "string"
-          ? materialLine.metadata.colourId
-          : "";
-
-      const underlayId =
-        typeof underlayLine?.metadata?.underlayId === "string"
-          ? underlayLine.metadata.underlayId
-          : "";
-
-      if (profileId) {
-        try {
-          const options = await getProfileOptions(profileId);
-          setProfileOptions((current) => ({
-            ...current,
-            [profileId]: options,
-          }));
-        } catch {
-          // Leave the quote load usable even if dependent catalogue data fails.
-        }
-      }
-
-      if (materialId) {
-        try {
-          const colours = await getMaterialColours(materialId);
-          setMaterialColours((current) => ({
-            ...current,
-            [materialId]: colours,
-          }));
-        } catch {
-          // Leave the quote load usable.
-        }
-      }
-
-      setter({
-        area: materialLine?.quantity ?? 0,
-        profileId,
-        profileOptionId,
-        materialId,
-        colourId,
-        underlayId,
+  function hydrateFromExistingLines(lines: QuoteLine[]) {
+    const roofMaterialLine = lines.find(
+      (l) =>
+        l.section === "Roofing" &&
+        l.category === "Material" &&
+        l.metadata?.kind === "profile",
+    );
+    const roofUnderlayLine = lines.find(
+      (l) =>
+        l.section === "Roofing" &&
+        l.category === "Material" &&
+        l.metadata?.kind === "underlay",
+    );
+    if (roofMaterialLine || roofUnderlayLine) {
+      setRoofing({
+        area:
+          (roofUnderlayLine?.quantity as number) ??
+          (roofMaterialLine?.metadata?.area as number) ??
+          0,
+        linealMetres: roofMaterialLine?.quantity ?? 0,
+        profileId: (roofMaterialLine?.metadata?.profileId as string) ?? "",
+        profileOptionId:
+          (roofMaterialLine?.metadata?.profileOptionId as string) ?? "",
+        materialId: (roofMaterialLine?.metadata?.materialId as string) ?? "",
+        colourId: (roofMaterialLine?.metadata?.colourId as string) ?? "",
+        underlayId: (roofUnderlayLine?.metadata?.underlayId as string) ?? "",
       });
+    }
 
-      void roofProfilesResult;
-      void wallProfilesResult;
-      void materialsResult;
-    };
+    const wallMaterialLine = lines.find(
+      (l) =>
+        l.section === "Wall Cladding" &&
+        l.category === "Material" &&
+        l.metadata?.kind === "profile",
+    );
+    const wallUnderlayLine = lines.find(
+      (l) =>
+        l.section === "Wall Cladding" &&
+        l.category === "Material" &&
+        l.metadata?.kind === "underlay",
+    );
+    if (wallMaterialLine || wallUnderlayLine) {
+      setWallCladding({
+        area:
+          (wallUnderlayLine?.quantity as number) ??
+          (wallMaterialLine?.metadata?.area as number) ??
+          0,
+        linealMetres: wallMaterialLine?.quantity ?? 0,
+        profileId: (wallMaterialLine?.metadata?.profileId as string) ?? "",
+        profileOptionId:
+          (wallMaterialLine?.metadata?.profileOptionId as string) ?? "",
+        materialId: (wallMaterialLine?.metadata?.materialId as string) ?? "",
+        colourId: (wallMaterialLine?.metadata?.colourId as string) ?? "",
+        underlayId: (wallUnderlayLine?.metadata?.underlayId as string) ?? "",
+      });
+    }
 
-    await Promise.all([
-      hydrateScope("Roofing", setRoofing),
-      hydrateScope("Wall Cladding", setWall),
-    ]);
-
-    const flashingRows = (
-      section: ScopeName,
-    ): FlashingRow[] =>
+    setRoofingFlashings(
+      lines
+        .filter((l) => l.section === "Roofing" && l.category === "Flashing")
+        .map((l) => ({
+          id: l.id,
+          flashingTypeId: (l.metadata?.flashingTypeId as string) ?? "",
+          customName: (l.metadata?.customName as string) ?? "",
+          girth: Number(l.metadata?.girth ?? 0),
+          materialId: (l.metadata?.materialId as string) ?? "",
+          length: Number(l.metadata?.length ?? 0),
+          quantity: l.quantity,
+        })),
+    );
+    setWallFlashings(
       lines
         .filter(
-          (line) =>
-            line.section === section && line.category === "Flashing",
+          (l) => l.section === "Wall Cladding" && l.category === "Flashing",
         )
-        .map((line) => ({
-          id: line.id,
-          flashingTypeId:
-            typeof line.metadata?.flashingTypeId === "string"
-              ? line.metadata.flashingTypeId
-              : "",
-          materialId:
-            typeof line.metadata?.materialId === "string"
-              ? line.metadata.materialId
-              : "",
-          length:
-            typeof line.metadata?.length === "number"
-              ? line.metadata.length
-              : 0,
-          quantity: line.quantity,
-        }));
+        .map((l) => ({
+          id: l.id,
+          flashingTypeId: (l.metadata?.flashingTypeId as string) ?? "",
+          customName: (l.metadata?.customName as string) ?? "",
+          girth: Number(l.metadata?.girth ?? 0),
+          materialId: (l.metadata?.materialId as string) ?? "",
+          length: Number(l.metadata?.length ?? 0),
+          quantity: l.quantity,
+        })),
+    );
 
-    setRoofingFlashings(flashingRows("Roofing"));
-    setWallFlashings(flashingRows("Wall Cladding"));
-
-    const labourRows = (
-      section: ScopeName,
-    ): LabourRow[] =>
+    setRoofingLabour(
+      lines
+        .filter((l) => l.section === "Roofing" && l.category === "Labour")
+        .map((l) => ({
+          id: l.id,
+          labourTypeId: (l.metadata?.labourTypeId as string) ?? "",
+          quantity: l.quantity,
+          hours: (l.metadata?.hours as number) ?? 0,
+          rate: (l.unitCost as number) ?? 0,
+        })),
+    );
+    setWallLabour(
       lines
         .filter(
-          (line) =>
-            line.section === section && line.category === "Labour",
+          (l) => l.section === "Wall Cladding" && l.category === "Labour",
         )
-        .map((line) => ({
-          id: line.id,
-          labourTypeId:
-            typeof line.metadata?.labourTypeId === "string"
-              ? line.metadata.labourTypeId
-              : "",
-          quantity: line.quantity,
-          hours:
-            typeof line.metadata?.hours === "number"
-              ? line.metadata.hours
-              : 0,
-        }));
-
-    setRoofingLabour(labourRows("Roofing"));
-    setWallLabour(labourRows("Wall Cladding"));
+        .map((l) => ({
+          id: l.id,
+          labourTypeId: (l.metadata?.labourTypeId as string) ?? "",
+          quantity: l.quantity,
+          hours: (l.metadata?.hours as number) ?? 0,
+          rate: (l.unitCost as number) ?? 0,
+        })),
+    );
 
     setAccessoryRows(
       lines
-        .filter((line) => line.section === "Accessories")
-        .map((line) => ({
-          id: line.id,
-          accessoryId:
-            typeof line.metadata?.accessoryId === "string"
-              ? line.metadata.accessoryId
-              : "",
-          quantity: line.quantity,
+        .filter((l) => l.section === "Accessories" && l.category === "Accessory")
+        .map((l) => ({
+          id: l.id,
+          accessoryId: (l.metadata?.accessoryId as string) ?? "",
+          quantity: l.quantity,
         })),
     );
+
+    const budgetLine = lines.find((l) => l.category === "Budget");
+    if (budgetLine?.metadata) {
+      setBudget({
+        materialMarginPercent: Number(
+          budgetLine.metadata.materialMarginPercent ?? 15,
+        ),
+        labourMarginPercent: Number(
+          budgetLine.metadata.labourMarginPercent ?? 15,
+        ),
+        overheads: Number(budgetLine.metadata.overheads ?? 0),
+        delivery: Number(budgetLine.metadata.delivery ?? 0),
+      });
+    }
   }
 
-  async function ensureProfileOptions(profileId: string) {
-    if (!profileId || profileOptions[profileId]) return;
-
+  async function loadProfileOptions(profileId: string) {
+    if (!profileId || profileOptionsByProfile[profileId]) return;
     try {
-      const values = await getProfileOptions(profileId);
-
-      setProfileOptions((current) => ({
+      const options = await getProfileOptions(profileId);
+      setProfileOptionsByProfile((current) => ({
         ...current,
-        [profileId]: values,
+        [profileId]: options,
       }));
     } catch (err) {
       setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to load profile options.",
+        err instanceof Error ? err.message : "Unable to load profile options.",
       );
     }
   }
 
-  async function ensureMaterialColours(materialId: string) {
-    if (!materialId || materialColours[materialId]) return;
-
+  async function loadColours(materialId: string) {
+    if (!materialId || coloursByMaterial[materialId]) return;
     try {
-      const values = await getMaterialColours(materialId);
-
-      setMaterialColours((current) => ({
-        ...current,
-        [materialId]: values,
-      }));
+      const colours = await getMaterialColours(materialId);
+      setColoursByMaterial((current) => ({ ...current, [materialId]: colours }));
     } catch (err) {
       setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to load material colours.",
+        err instanceof Error ? err.message : "Unable to load material colours.",
       );
     }
   }
 
   function updateScope(
-    key: ScopeKey,
+    which: "roofing" | "wallCladding",
     updates: Partial<ScopeState>,
   ) {
-    const setter = key === "roofing" ? setRoofing : setWall;
-
+    const setter = which === "roofing" ? setRoofing : setWallCladding;
     setter((current) => {
-      const next = {
-        ...current,
-        ...updates,
-      };
-
+      const next = { ...current, ...updates };
       if ("profileId" in updates) {
         next.profileOptionId = "";
-
-        if (updates.profileId) {
-          void ensureProfileOptions(updates.profileId);
-        }
+        if (updates.profileId) loadProfileOptions(updates.profileId);
       }
-
       if ("materialId" in updates) {
         next.colourId = "";
-
-        if (updates.materialId) {
-          void ensureMaterialColours(updates.materialId);
-        }
+        if (updates.materialId) loadColours(updates.materialId);
       }
-
       return next;
     });
   }
 
-  function addFlashing(key: ScopeKey) {
+  function addFlashingRow(which: "roofing" | "wall") {
+    const sectionMaterialId =
+      which === "roofing" ? roofing.materialId : wallCladding.materialId;
     const row: FlashingRow = {
       id: crypto.randomUUID(),
       flashingTypeId: "",
-      materialId: "",
+      customName: "",
+      girth: 0,
+      materialId: sectionMaterialId || "",
       length: 0,
       quantity: 1,
     };
-
-    if (key === "roofing") {
-      setRoofingFlashings((current) => [...current, row]);
-    } else {
-      setWallFlashings((current) => [...current, row]);
-    }
+    if (which === "roofing") setRoofingFlashings((c) => [...c, row]);
+    else setWallFlashings((c) => [...c, row]);
   }
 
-  function updateFlashing(
-    key: ScopeKey,
+  function updateFlashingRow(
+    which: "roofing" | "wall",
     id: string,
     updates: Partial<FlashingRow>,
   ) {
-    const setter =
-      key === "roofing"
-        ? setRoofingFlashings
-        : setWallFlashings;
-
+    const setter = which === "roofing" ? setRoofingFlashings : setWallFlashings;
     setter((current) =>
-      current.map((row) =>
-        row.id === id ? { ...row, ...updates } : row,
-      ),
+      current.map((r) => {
+        if (r.id !== id) return r;
+        const next = { ...r, ...updates };
+        if ("flashingTypeId" in updates) {
+          const typeId = updates.flashingTypeId ?? "";
+          if (typeId && typeId !== CUSTOM_FLASHING) {
+            const ft = flashingTypes.find((t) => t.id === typeId);
+            if (ft?.typicalGirth != null && ft.typicalGirth > 0) {
+              next.girth = ft.typicalGirth;
+            }
+            next.customName = "";
+          }
+          if (typeId === CUSTOM_FLASHING || typeId === "") {
+            if (typeId === CUSTOM_FLASHING) {
+              next.flashingTypeId = "";
+            }
+          }
+        }
+        return next;
+      }),
     );
   }
 
-  function removeFlashing(key: ScopeKey, id: string) {
-    const setter =
-      key === "roofing"
-        ? setRoofingFlashings
-        : setWallFlashings;
-
-    setter((current) =>
-      current.filter((row) => row.id !== id),
-    );
+  function removeFlashingRow(which: "roofing" | "wall", id: string) {
+    const setter = which === "roofing" ? setRoofingFlashings : setWallFlashings;
+    setter((current) => current.filter((r) => r.id !== id));
   }
 
-  function addLabour(key: ScopeKey) {
+  function addLabourRow(which: "roofing" | "wall") {
     const row: LabourRow = {
       id: crypto.randomUUID(),
       labourTypeId: "",
-      quantity: 1,
+      quantity: 0,
       hours: 0,
+      rate: 0,
     };
-
-    if (key === "roofing") {
-      setRoofingLabour((current) => [...current, row]);
-    } else {
-      setWallLabour((current) => [...current, row]);
-    }
+    if (which === "roofing") setRoofingLabour((c) => [...c, row]);
+    else setWallLabour((c) => [...c, row]);
   }
 
-  function updateLabour(
-    key: ScopeKey,
+  function updateLabourRow(
+    which: "roofing" | "wall",
     id: string,
     updates: Partial<LabourRow>,
   ) {
-    const setter =
-      key === "roofing"
-        ? setRoofingLabour
-        : setWallLabour;
-
+    const setter = which === "roofing" ? setRoofingLabour : setWallLabour;
     setter((current) =>
-      current.map((row) =>
-        row.id === id ? { ...row, ...updates } : row,
-      ),
+      current.map((r) => {
+        if (r.id !== id) return r;
+        const next = { ...r, ...updates };
+        if ("labourTypeId" in updates) {
+          const lt = labourTypes.find((t) => t.id === updates.labourTypeId);
+          next.rate = lt?.rate ?? next.rate;
+        }
+        return next;
+      }),
     );
   }
 
-  function removeLabour(key: ScopeKey, id: string) {
-    const setter =
-      key === "roofing"
-        ? setRoofingLabour
-        : setWallLabour;
-
-    setter((current) =>
-      current.filter((row) => row.id !== id),
-    );
+  function removeLabourRow(which: "roofing" | "wall", id: string) {
+    const setter = which === "roofing" ? setRoofingLabour : setWallLabour;
+    setter((current) => current.filter((r) => r.id !== id));
   }
 
-  function addAccessory() {
-    setAccessoryRows((current) => [
-      ...current,
-      {
-        id: crypto.randomUUID(),
-        accessoryId: "",
-        quantity: 1,
-      },
+  function addAccessoryRow() {
+    setAccessoryRows((c) => [
+      ...c,
+      { id: crypto.randomUUID(), accessoryId: "", quantity: 1 },
     ]);
   }
 
-  function updateAccessory(
-    id: string,
-    updates: Partial<AccessoryRow>,
-  ) {
+  function updateAccessoryRow(id: string, updates: Partial<AccessoryRow>) {
     setAccessoryRows((current) =>
-      current.map((row) =>
-        row.id === id ? { ...row, ...updates } : row,
-      ),
+      current.map((r) => (r.id === id ? { ...r, ...updates } : r)),
     );
   }
 
-  function removeAccessory(id: string) {
-    setAccessoryRows((current) =>
-      current.filter((row) => row.id !== id),
-    );
+  function removeAccessoryRow(id: string) {
+    setAccessoryRows((current) => current.filter((r) => r.id !== id));
   }
 
-  function getMaterialPrice(scope: ScopeState) {
-    if (
-      !scope.profileId ||
-      !scope.profileOptionId ||
-      !scope.materialId
-    ) {
-      return null;
-    }
-
-    const exactColour = materialPrices.find(
-      (price) =>
-        price.material_id === scope.materialId &&
-        price.profile_id === scope.profileId &&
-        price.profile_option_id === scope.profileOptionId &&
-        price.colour_id === scope.colourId,
-    );
-
-    if (exactColour) return exactColour.unit_cost;
-
-    const genericColour = materialPrices.find(
-      (price) =>
-        price.material_id === scope.materialId &&
-        price.profile_id === scope.profileId &&
-        price.profile_option_id === scope.profileOptionId &&
-        price.colour_id == null,
-    );
-
-    return genericColour?.unit_cost ?? null;
+  function materialLineCost(scope: ScopeState): number | null {
+    const unit = resolveMaterialUnitCost(scope, materialPrices);
+    if (unit == null) return null;
+    if (!scope.linealMetres) return 0;
+    return unit * scope.linealMetres;
   }
 
-  function getFlashingBand(
-    flashingTypeId: string,
-  ): FlashingGirthBand | null {
-    const type = flashingTypes.find(
-      (item) => item.id === flashingTypeId,
-    );
-
-    if (!type || type.typicalGirth == null) return null;
-
-    return (
-      flashingBands
-        .filter(
-          (band) =>
-            type.typicalGirth! >= band.min_girth &&
-            type.typicalGirth! <= band.max_girth,
-        )
-        .sort((a, b) => {
-          if (a.min_girth !== b.min_girth) {
-            return a.min_girth - b.min_girth;
-          }
-
-          return a.sort_order - b.sort_order;
-        })[0] ?? null
-    );
-  }
-
-  function getFlashingPrice(
-    flashingTypeId: string,
-    materialId: string,
-  ) {
-    const band = getFlashingBand(flashingTypeId);
-
-    if (!band || !materialId) return null;
-
-    const price = flashingPrices.find(
-      (item) =>
-        item.flashing_girth_band_id === band.id &&
-        item.material_id === materialId,
-    );
-
-    return price?.unit_cost ?? null;
-  }
-
-  function materialDescription(
-    section: ScopeName,
-    scope: ScopeState,
-  ) {
-    const profile = (
-      section === "Roofing"
-        ? roofProfiles
-        : wallProfiles
-    ).find((item) => item.id === scope.profileId);
-
-    const option = scope.profileOptionId
-      ? profileOptions[scope.profileId]?.find(
-          (item) => item.id === scope.profileOptionId,
-        )
-      : null;
-
-    const material = materials.find(
-      (item) => item.id === scope.materialId,
-    );
-
-    const colour = scope.colourId
-      ? materialColours[scope.materialId]?.find(
-          (item) => item.id === scope.colourId,
-        )
-      : null;
-
-    return [
-      section,
-      profile?.name,
-      option?.value,
-      material?.name,
-      colour?.name,
-    ]
-      .filter(Boolean)
-      .join(" — ");
-  }
-
-  function scopeMaterialCost(scope: ScopeState) {
-    const price = getMaterialPrice(scope);
-
-    if (price == null || scope.area <= 0) return null;
-
-    return price * scope.area;
-  }
-
-  function scopeUnderlayCost(scope: ScopeState) {
-    const underlay = underlays.find(
-      (item) => item.id === scope.underlayId,
-    );
-
-    if (
-      !underlay ||
-      underlay.unitCost == null ||
-      scope.area <= 0
-    ) {
-      return null;
-    }
-
+  function underlayLineCost(scope: ScopeState): number | null {
+    const underlay = underlays.find((u) => u.id === scope.underlayId);
+    if (!scope.underlayId || !underlay || underlay.unitCost == null) return null;
     return underlay.unitCost * scope.area;
   }
 
-  function flashingCost(row: FlashingRow) {
-    const price = getFlashingPrice(
-      row.flashingTypeId,
-      row.materialId,
+  function flashingLineCost(row: FlashingRow): number | null {
+    const band = getFlashingBand(
+      row.girth,
+      flashingBands,
+      row.flashingTypeId || null,
     );
-
-    if (
-      price == null ||
-      row.length <= 0 ||
-      row.quantity <= 0
-    ) {
-      return null;
-    }
-
-    return price * row.length * row.quantity;
+    const unit = resolveFlashingUnitCost(band, row.materialId, flashingPrices);
+    if (unit == null) return null;
+    return unit * row.length * row.quantity;
   }
 
-  function labourCost(row: LabourRow) {
-    const type = labourTypes.find(
-      (item) => item.id === row.labourTypeId,
-    );
-
-    if (
-      !type ||
-      type.rate == null ||
-      row.hours <= 0 ||
-      row.quantity <= 0
-    ) {
-      return null;
-    }
-
-    return type.rate * row.hours * row.quantity;
+  function labourLineCost(row: LabourRow): number | null {
+    if (!row.rate) return null;
+    return row.hours * row.rate;
   }
 
-  function accessoryCost(row: AccessoryRow) {
-    const accessory = accessories.find(
-      (item) => item.id === row.accessoryId,
-    );
-
-    if (
-      !accessory ||
-      accessory.unitCost == null ||
-      row.quantity <= 0
-    ) {
-      return null;
-    }
-
-    return accessory.unitCost * row.quantity;
+  function accessoryLineCost(row: AccessoryRow): number | null {
+    const acc = accessoryOptions.find((a) => a.id === row.accessoryId);
+    if (!acc || acc.unitCost == null) return null;
+    return acc.unitCost * row.quantity;
   }
 
-  const totals = useMemo(() => {
-    let subtotal = 0;
+  function sumOrUnknown(values: (number | null)[]): number | null {
+    if (values.length === 0) return 0;
+    if (values.some((v) => v === null)) return null;
+    return (values as number[]).reduce((a, b) => a + b, 0);
+  }
 
-    const roofingMaterial = scopeMaterialCost(roofing);
-    const roofingUnderlay = scopeUnderlayCost(roofing);
-    const wallMaterial = scopeMaterialCost(wall);
-    const wallUnderlay = scopeUnderlayCost(wall);
+  const materialsTotal = useMemo(
+    () =>
+      sumOrUnknown([
+        materialLineCost(roofing),
+        underlayLineCost(roofing),
+        materialLineCost(wallCladding),
+        underlayLineCost(wallCladding),
+      ]),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [roofing, wallCladding, underlays, materialPrices],
+  );
 
-    if (roofingMaterial != null) subtotal += roofingMaterial;
-    if (roofingUnderlay != null) subtotal += roofingUnderlay;
-    if (wallMaterial != null) subtotal += wallMaterial;
-    if (wallUnderlay != null) subtotal += wallUnderlay;
+  const flashingsTotal = useMemo(
+    () =>
+      sumOrUnknown([
+        ...roofingFlashings.map(flashingLineCost),
+        ...wallFlashings.map(flashingLineCost),
+      ]),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [roofingFlashings, wallFlashings, flashingBands, flashingPrices],
+  );
 
-    for (const row of roofingFlashings) {
-      const value = flashingCost(row);
-      if (value != null) subtotal += value;
-    }
+  const labourTotal = useMemo(
+    () =>
+      sumOrUnknown([
+        ...roofingLabour.map(labourLineCost),
+        ...wallLabour.map(labourLineCost),
+      ]),
+    [roofingLabour, wallLabour],
+  );
 
-    for (const row of wallFlashings) {
-      const value = flashingCost(row);
-      if (value != null) subtotal += value;
-    }
+  const accessoriesTotal = useMemo(
+    () => sumOrUnknown(accessoryRows.map(accessoryLineCost)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [accessoryRows, accessoryOptions],
+  );
 
-    for (const row of roofingLabour) {
-      const value = labourCost(row);
-      if (value != null) subtotal += value;
-    }
-
-    for (const row of wallLabour) {
-      const value = labourCost(row);
-      if (value != null) subtotal += value;
-    }
-
-    for (const row of accessoryRows) {
-      const value = accessoryCost(row);
-      if (value != null) subtotal += value;
-    }
-
-    const gst = subtotal * 0.15;
-    const total = subtotal + gst;
-
-    return {
-      subtotal,
-      gst,
-      total,
-    };
-  }, [
-    roofing,
-    wall,
-    roofingFlashings,
-    wallFlashings,
-    roofingLabour,
-    wallLabour,
-    accessoryRows,
-    materialPrices,
-    flashingBands,
-    flashingPrices,
-    flashingTypes,
-    underlays,
-    labourTypes,
-    accessories,
+  const subtotal = sumOrUnknown([
+    materialsTotal,
+    flashingsTotal,
+    labourTotal,
+    accessoriesTotal,
   ]);
+  const gst = subtotal === null ? null : subtotal * 0.15;
+  const total = subtotal === null || gst === null ? null : subtotal + gst;
 
-  function buildQuoteLines(): QuoteLine[] {
-    if (!quote) return [];
+  const deliveryCost = budget.delivery > 0 ? budget.delivery : 0;
+  const directMaterial = sumOrUnknown([
+    materialsTotal,
+    flashingsTotal,
+    accessoriesTotal,
+    deliveryCost,
+  ]);
+  const directLabour = labourTotal;
+  const directCostTotal =
+    directMaterial === null || directLabour === null
+      ? null
+      : directMaterial + directLabour;
 
-    const lines: QuoteLine[] = [];
-    let sortOrder = 0;
+  const materialSell =
+    directMaterial === null
+      ? null
+      : directMaterial * (1 + budget.materialMarginPercent / 100);
+  const labourSell =
+    directLabour === null
+      ? null
+      : directLabour * (1 + budget.labourMarginPercent / 100);
+  const materialMarkup =
+    directMaterial === null || materialSell === null
+      ? null
+      : materialSell - directMaterial;
+  const labourMarkup =
+    directLabour === null || labourSell === null
+      ? null
+      : labourSell - directLabour;
+  const markupTotal =
+    materialMarkup === null || labourMarkup === null
+      ? null
+      : materialMarkup + labourMarkup;
+  const salesTotal =
+    materialSell === null || labourSell === null
+      ? null
+      : materialSell + labourSell;
+  const cogs = directCostTotal;
+  const estimatedProfit =
+    salesTotal === null || cogs === null
+      ? null
+      : salesTotal - cogs - budget.overheads;
+  const totalArea = roofing.area + wallCladding.area;
+  const m2Rate =
+    salesTotal === null || totalArea <= 0 ? null : salesTotal / totalArea;
+  const profitMarginPct =
+    estimatedProfit === null || salesTotal === null || salesTotal === 0
+      ? null
+      : (estimatedProfit / salesTotal) * 100;
+  async function saveQuote() {
+    if (!quote || saving) return;
+    setSaving(true);
+    setError("");
 
-    function pushLine(
-      section: string,
-      category: string,
-      description: string,
-      quantity: number,
-      unit: string,
-      unitCost: number | null,
-      metadata: Record<string, unknown>,
-    ) {
+    try {
+      const lines: QuoteLine[] = [];
+
+      function pushScopeLines(section: Section, scope: ScopeState) {
+        if (
+          scope.profileId ||
+          scope.materialId ||
+          scope.linealMetres ||
+          scope.area
+        ) {
+          const unitCost = resolveMaterialUnitCost(scope, materialPrices);
+          lines.push({
+            id: crypto.randomUUID(),
+            quoteId: quote!.id,
+            section,
+            category: "Material",
+            description: "Profile/material selection",
+            quantity: scope.linealMetres,
+            unit: "Lm",
+            unitCost,
+            sellPrice: null,
+            sortOrder: lines.length,
+            metadata: {
+              kind: "profile",
+              profileId: scope.profileId,
+              profileOptionId: scope.profileOptionId,
+              materialId: scope.materialId,
+              colourId: scope.colourId,
+              area: scope.area,
+            },
+          });
+        }
+        if (scope.underlayId) {
+          lines.push({
+            id: crypto.randomUUID(),
+            quoteId: quote!.id,
+            section,
+            category: "Material",
+            description: "Underlay",
+            quantity: scope.area,
+            unit: "m²",
+            unitCost:
+              underlayLineCost(scope) !== null
+                ? (underlays.find((u) => u.id === scope.underlayId)?.unitCost ??
+                  null)
+                : null,
+            sellPrice: null,
+            sortOrder: lines.length,
+            metadata: { kind: "underlay", underlayId: scope.underlayId },
+          });
+        }
+      }
+
+      pushScopeLines("Roofing", roofing);
+      pushScopeLines("Wall Cladding", wallCladding);
+
+      function pushFlashingLines(section: Section, rows: FlashingRow[]) {
+        rows.forEach((row, i) => {
+          const band = getFlashingBand(
+            row.girth,
+            flashingBands,
+            row.flashingTypeId || null,
+          );
+          const unitCost = resolveFlashingUnitCost(
+            band,
+            row.materialId,
+            flashingPrices,
+          );
+          const typeName =
+            flashingTypes.find((t) => t.id === row.flashingTypeId)?.name ??
+            null;
+          const description =
+            row.flashingTypeId && typeName
+              ? typeName
+              : row.customName || "Custom flashing";
+
+          lines.push({
+            id: row.id,
+            quoteId: quote!.id,
+            section,
+            category: "Flashing",
+            description,
+            quantity: row.quantity,
+            unit: "m",
+            unitCost,
+            sellPrice: null,
+            sortOrder: i,
+            metadata: {
+              flashingTypeId: row.flashingTypeId,
+              customName: row.customName,
+              girth: row.girth,
+              materialId: row.materialId,
+              length: row.length,
+            },
+          });
+        });
+      }
+      pushFlashingLines("Roofing", roofingFlashings);
+      pushFlashingLines("Wall Cladding", wallFlashings);
+
+      function pushLabourLines(section: Section, rows: LabourRow[]) {
+        rows.forEach((row, i) => {
+          lines.push({
+            id: row.id,
+            quoteId: quote!.id,
+            section,
+            category: "Labour",
+            description:
+              labourTypes.find((t) => t.id === row.labourTypeId)?.name ??
+              "Labour",
+            quantity: row.quantity,
+            unit: "hours",
+            unitCost: row.rate || null,
+            sellPrice: null,
+            sortOrder: i,
+            metadata: { labourTypeId: row.labourTypeId, hours: row.hours },
+          });
+        });
+      }
+      pushLabourLines("Roofing", roofingLabour);
+      pushLabourLines("Wall Cladding", wallLabour);
+
+      accessoryRows.forEach((row, i) => {
+        lines.push({
+          id: row.id,
+          quoteId: quote!.id,
+          section: "Accessories",
+          category: "Accessory",
+          description:
+            accessoryOptions.find((a) => a.id === row.accessoryId)?.name ??
+            "Accessory",
+          quantity: row.quantity,
+          unit: "item",
+          unitCost:
+            accessoryOptions.find((a) => a.id === row.accessoryId)?.unitCost ??
+            null,
+          sellPrice: null,
+          sortOrder: i,
+          metadata: { accessoryId: row.accessoryId },
+        });
+      });
+
       lines.push({
         id: crypto.randomUUID(),
         quoteId: quote!.id,
-        section,
-        category,
-        description,
-        quantity,
-        unit,
-        unitCost,
-        sellPrice: unitCost,
-        sortOrder: sortOrder++,
-        metadata,
-      });
-    }
-
-    function addScope(
-      section: ScopeName,
-      scope: ScopeState,
-    ) {
-      if (
-        scope.area > 0 &&
-        scope.profileId &&
-        scope.profileOptionId &&
-        scope.materialId
-      ) {
-        const price = getMaterialPrice(scope);
-
-        pushLine(
-          section,
-          "Material",
-          materialDescription(section, scope),
-          scope.area,
-          "m²",
-          price,
-          {
-            kind: "profile",
-            profileId: scope.profileId,
-            profileOptionId: scope.profileOptionId,
-            materialId: scope.materialId,
-            colourId: scope.colourId || null,
-          },
-        );
-      }
-
-      if (scope.underlayId && scope.area > 0) {
-        const underlay = underlays.find(
-          (item) => item.id === scope.underlayId,
-        );
-
-        pushLine(
-          section,
-          "Material",
-          underlay?.name ?? "Underlay",
-          scope.area,
-          underlay?.unit ?? "m²",
-          underlay?.unitCost ?? null,
-          {
-            kind: "underlay",
-            underlayId: scope.underlayId,
-          },
-        );
-      }
-    }
-
-    addScope("Roofing", roofing);
-    addScope("Wall Cladding", wall);
-
-    function addFlashings(
-      section: ScopeName,
-      rows: FlashingRow[],
-    ) {
-      for (const row of rows) {
-        if (
-          !row.flashingTypeId ||
-          !row.materialId ||
-          row.length <= 0 ||
-          row.quantity <= 0
-        ) {
-          continue;
-        }
-
-        const type = flashingTypes.find(
-          (item) => item.id === row.flashingTypeId,
-        );
-
-        const material = materials.find(
-          (item) => item.id === row.materialId,
-        );
-
-        const band = getFlashingBand(row.flashingTypeId);
-        const price = getFlashingPrice(
-          row.flashingTypeId,
-          row.materialId,
-        );
-
-        pushLine(
-          section,
-          "Flashing",
-          [
-            type?.name,
-            material?.name,
-            band
-              ? `${band.min_girth}-${band.max_girth}G`
-              : null,
-          ]
-            .filter(Boolean)
-            .join(" — "),
-          row.length * row.quantity,
-          "m",
-          price,
-          {
-            kind: "flashing",
-            flashingTypeId: row.flashingTypeId,
-            materialId: row.materialId,
-            length: row.length,
-            girthBandId: band?.id ?? null,
-            typicalGirth:
-              type?.typicalGirth ?? null,
-          },
-        );
-      }
-    }
-
-    addFlashings("Roofing", roofingFlashings);
-    addFlashings("Wall Cladding", wallFlashings);
-
-    function addLabour(
-      section: ScopeName,
-      rows: LabourRow[],
-    ) {
-      for (const row of rows) {
-        if (
-          !row.labourTypeId ||
-          row.hours <= 0 ||
-          row.quantity <= 0
-        ) {
-          continue;
-        }
-
-        const type = labourTypes.find(
-          (item) => item.id === row.labourTypeId,
-        );
-
-        pushLine(
-          section,
-          "Labour",
-          type?.name ?? "Labour",
-          row.hours * row.quantity,
-          "hr",
-          type?.rate ?? null,
-          {
-            kind: "labour",
-            labourTypeId: row.labourTypeId,
-            hours: row.hours,
-          },
-        );
-      }
-    }
-
-    addLabour("Roofing", roofingLabour);
-    addLabour("Wall Cladding", wallLabour);
-
-    for (const row of accessoryRows) {
-      if (!row.accessoryId || row.quantity <= 0) continue;
-
-      const accessory = accessories.find(
-        (item) => item.id === row.accessoryId,
-      );
-
-      pushLine(
-        "Accessories",
-        "Accessory",
-        accessory?.name ?? "Accessory",
-        row.quantity,
-        accessory?.unit ?? "item",
-        accessory?.unitCost ?? null,
-        {
-          kind: "accessory",
-          accessoryId: row.accessoryId,
+        section: "Accessories",
+        category: "Budget",
+        description: "Budget margins and overheads",
+        quantity: 1,
+        unit: "item",
+        unitCost: null,
+        sellPrice: salesTotal,
+        sortOrder: lines.length,
+        metadata: {
+          materialMarginPercent: budget.materialMarginPercent,
+          labourMarginPercent: budget.labourMarginPercent,
+          overheads: budget.overheads,
+          delivery: budget.delivery,
+          directMaterial,
+          directLabour,
+          materialSell,
+          labourSell,
+          salesTotal,
+          estimatedProfit,
         },
-      );
-    }
-
-    return lines;
-  }
-
-  async function saveQuote() {
-    if (!quote) return;
-
-    try {
-      setSaving(true);
-      setError("");
-      setNotice("");
-
-      const lines = buildQuoteLines();
+      });
 
       await saveQuoteLines(quote.id, lines);
-
-      setNotice("Quote saved.");
-
-      window.setTimeout(() => {
-        setNotice("");
-      }, 2500);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Unable to save quote.",
-      );
+      setError(err instanceof Error ? err.message : "Unable to save quote.");
     } finally {
       setSaving(false);
     }
@@ -1105,920 +814,893 @@ export default function QuotePage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-[#f7f7f5] p-8 text-sm text-black/60">
-        Loading quote…
-      </main>
+      <div className="min-h-screen bg-[#f4f4f1] px-6 py-10 text-[11px] text-black/40">
+        Loading quote...
+      </div>
+    );
+  }
+
+  if (error && !job) {
+    return (
+      <div className="min-h-screen bg-[#f4f4f1] px-6 py-10 text-[#242422]">
+        <div className="mx-auto max-w-[900px]">
+          <div className="rounded-lg border border-red-200 bg-red-50 p-6">
+            <div className="text-[10px] font-medium uppercase tracking-[0.15em] text-red-600">
+              Quote loading error
+            </div>
+            <div className="mt-3 whitespace-pre-wrap text-[12px] leading-6 text-red-800">
+              {error}
+            </div>
+            <div className="mt-5">
+              <Link
+                href={`/jobs/${jobId}`}
+                className="inline-block rounded-md bg-[#242422] px-4 py-2 text-[10px] uppercase tracking-[0.12em] text-white"
+              >
+                Back to job
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
     );
   }
 
   if (!job || !quote) {
     return (
-      <main className="min-h-screen bg-[#f7f7f5] p-8">
-        <p className="text-sm text-black/60">
-          Quote could not be loaded.
-        </p>
-      </main>
+      <div className="min-h-screen bg-[#f4f4f1] px-6 py-10 text-[#242422]">
+        <div className="mx-auto max-w-[900px]">
+          <div className="rounded-lg border border-black/10 bg-[#fafaf8] p-6">
+            <div className="text-[10px] uppercase tracking-[0.15em] text-black/30">
+              Quote unavailable
+            </div>
+            <div className="mt-3 text-[12px] text-black/50">
+              The quote could not be loaded.
+            </div>
+          </div>
+        </div>
+      </div>
     );
   }
 
   return (
-    <main className="min-h-screen bg-[#f7f7f5] text-black">
-      <div className="mx-auto max-w-[1500px] px-6 py-8">
-        <header className="mb-8 flex flex-col gap-5 border-b border-black/[0.08] pb-6 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <div className="mb-2 flex items-center gap-3 text-xs text-black/45">
-              <Link href={`/jobs/${job.id}`} className="hover:text-black">
-                Jobs
-              </Link>
-              <span>/</span>
-              <span>{job.jobNumber}</span>
-              <span>/</span>
-              <span>Quote</span>
+    <div className="min-h-screen bg-[#f4f4f1] text-[#242422]">
+      <header className="border-b border-black/[0.08] bg-[#fafaf8]">
+        <div className="mx-auto max-w-[1200px] px-5 py-5 md:px-9">
+          <Link
+            href={`/jobs/${job.id}`}
+            className="text-[10px] text-black/35 hover:text-black/70"
+          >
+            ← {job.jobNumber}
+          </Link>
+
+          <div className="mt-6 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+            <div>
+              <div className="font-mono text-[10px] tracking-wide text-black/30">
+                {quote.quoteNumber}
+              </div>
+              <h1 className="mt-1 text-[25px] font-medium tracking-[-0.035em]">
+                Quote
+              </h1>
+              <div className="mt-1 text-[11px] text-black/40">
+                {job.customer} · {job.address}
+              </div>
             </div>
 
-            <h1 className="text-2xl font-medium tracking-tight">
-              {job.name}
-            </h1>
-
-            <div className="mt-2 text-sm text-black/55">
-              {job.customer}
-              {job.address ? ` · ${job.address}` : ""}
+            <div className="flex items-center gap-3">
+              <span className="rounded-full border border-black/[0.08] bg-white px-4 py-2 text-[10px] text-black/50">
+                {quote.status}
+              </span>
+              <span className="rounded-full border border-black/[0.08] bg-white px-4 py-2 font-mono text-[10px] text-black/45">
+                Rev {quote.revision}
+              </span>
+              <button
+                type="button"
+                onClick={saveQuote}
+                disabled={saving}
+                className="rounded-md bg-[#242422] px-4 py-2 text-[10px] text-white disabled:cursor-wait disabled:opacity-50"
+              >
+                {saving ? "Saving..." : "Save quote"}
+              </button>
             </div>
           </div>
+        </div>
+      </header>
 
-          <div className="flex items-center gap-3">
-            <div className="text-right text-xs text-black/45">
-              <div>{quote.quoteNumber}</div>
-              <div>Revision {quote.revision}</div>
-              <div>{quote.status}</div>
-            </div>
-
-            <button
-              type="button"
-              onClick={saveQuote}
-              disabled={saving}
-              className="rounded-md bg-black px-5 py-2.5 text-sm text-white transition hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {saving ? "Saving…" : "Save quote"}
-            </button>
-          </div>
-        </header>
-
+      <main className="mx-auto max-w-[1200px] px-5 py-7 md:px-9">
         {error && (
-          <div className="mb-6 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <div className="mb-5 border-l-2 border-red-500/60 bg-red-50 px-3 py-2.5 text-[11px] text-red-700">
             {error}
           </div>
         )}
 
-        {notice && (
-          <div className="mb-6 rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
-            {notice}
-          </div>
-        )}
-
-        <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="space-y-8">
-            <ScopeSection
-              title="Roofing"
-              scope={roofing}
-              profiles={roofProfiles}
-              materials={materials}
-              underlays={underlays}
-              profileOptions={profileOptions}
-              colours={materialColours}
-              onChange={(updates) =>
-                updateScope("roofing", updates)
-              }
-              getPrice={getMaterialPrice}
-              onAddFlashing={() => addFlashing("roofing")}
-              flashingRows={roofingFlashings}
-              flashingTypes={flashingTypes}
-              flashingBands={flashingBands}
-              onUpdateFlashing={(id, updates) =>
-                updateFlashing("roofing", id, updates)
-              }
-              onRemoveFlashing={(id) =>
-                removeFlashing("roofing", id)
-              }
-              onAddLabour={() => addLabour("roofing")}
-              labourRows={roofingLabour}
-              labourTypes={labourTypes}
-              onUpdateLabour={(id, updates) =>
-                updateLabour("roofing", id, updates)
-              }
-              onRemoveLabour={(id) =>
-                removeLabour("roofing", id)
-              }
-              getFlashingBand={getFlashingBand}
-              getFlashingPrice={getFlashingPrice}
-              flashingCost={flashingCost}
-              labourCost={labourCost}
-            />
-
-            <ScopeSection
-              title="Wall Cladding"
-              scope={wall}
-              profiles={wallProfiles}
-              materials={materials}
-              underlays={underlays}
-              profileOptions={profileOptions}
-              colours={materialColours}
-              onChange={(updates) =>
-                updateScope("wall", updates)
-              }
-              getPrice={getMaterialPrice}
-              onAddFlashing={() => addFlashing("wall")}
-              flashingRows={wallFlashings}
-              flashingTypes={flashingTypes}
-              flashingBands={flashingBands}
-              onUpdateFlashing={(id, updates) =>
-                updateFlashing("wall", id, updates)
-              }
-              onRemoveFlashing={(id) =>
-                removeFlashing("wall", id)
-              }
-              onAddLabour={() => addLabour("wall")}
-              labourRows={wallLabour}
-              labourTypes={labourTypes}
-              onUpdateLabour={(id, updates) =>
-                updateLabour("wall", id, updates)
-              }
-              onRemoveLabour={(id) =>
-                removeLabour("wall", id)
-              }
-              getFlashingBand={getFlashingBand}
-              getFlashingPrice={getFlashingPrice}
-              flashingCost={flashingCost}
-              labourCost={labourCost}
-            />
-
-            <section className="rounded-lg border border-black/[0.08] bg-white">
-              <div className="flex items-center justify-between border-b border-black/[0.08] px-5 py-4">
-                <div>
-                  <h2 className="font-medium">Accessories</h2>
-                  <p className="mt-1 text-xs text-black/45">
-                    Add catalogue accessories to the quote.
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={addAccessory}
-                  className="rounded-md border border-black/[0.12] px-3 py-2 text-xs hover:bg-black/[0.03]"
-                >
-                  + Add accessory
-                </button>
-              </div>
-
-              <div className="p-5">
-                {accessoryRows.length === 0 ? (
-                  <p className="text-sm text-black/40">
-                    No accessories added.
-                  </p>
-                ) : (
-                  <div className="space-y-3">
-                    {accessoryRows.map((row) => {
-                      const accessory = accessories.find(
-                        (item) => item.id === row.accessoryId,
-                      );
-
-                      return (
-                        <div
-                          key={row.id}
-                          className="grid gap-3 rounded-md border border-black/[0.08] p-3 md:grid-cols-[minmax(0,1fr)_120px_120px_40px]"
-                        >
-                          <select
-                            className={inputClass}
-                            value={row.accessoryId}
-                            onChange={(event) =>
-                              updateAccessory(row.id, {
-                                accessoryId:
-                                  event.target.value,
-                              })
-                            }
-                          >
-                            <option value="">
-                              Select accessory…
-                            </option>
-
-                            {accessories.map((item) => (
-                              <option
-                                key={item.id}
-                                value={item.id}
-                              >
-                                {item.name}
-                              </option>
-                            ))}
-                          </select>
-
-                          <input
-                            className={numberInputClass}
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={row.quantity}
-                            onChange={(event) =>
-                              updateAccessory(row.id, {
-                                quantity: numberValue(
-                                  event.target.value,
-                                ),
-                              })
-                            }
-                          />
-
-                          <div className="flex items-center justify-end text-sm">
-                            {money(
-                              accessory?.unitCost != null
-                                ? accessory.unitCost *
-                                    row.quantity
-                                : null,
-                            )}
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              removeAccessory(row.id)
-                            }
-                            className="text-black/35 hover:text-red-600"
-                            aria-label="Remove accessory"
-                          >
-                            ×
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </section>
+        <section className="mb-6 rounded-lg border border-black/[0.1] bg-white p-5 shadow-sm">
+          <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+            <h2 className="text-[11px] uppercase tracking-[0.15em] text-black/35">
+              Budget
+            </h2>
+            <div className="text-[10px] text-black/35">
+              {job.customer} · {job.address}
+            </div>
           </div>
 
-          <aside className="xl:sticky xl:top-6 xl:self-start">
-            <div className="rounded-lg border border-black/[0.08] bg-white">
-              <div className="border-b border-black/[0.08] px-5 py-4">
-                <h2 className="font-medium">Quote summary</h2>
+          <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-6">
+            <Field label="Material margin %">
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={budget.materialMarginPercent}
+                onChange={(e) =>
+                  setBudget((b) => ({
+                    ...b,
+                    materialMarginPercent: Number(e.target.value) || 0,
+                  }))
+                }
+                className="w-full rounded border border-black/[0.08] bg-[#fafaf8] px-2 py-1.5 text-[11px] text-black/60 outline-none"
+              />
+            </Field>
+            <Field label="Labour margin %">
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={budget.labourMarginPercent}
+                onChange={(e) =>
+                  setBudget((b) => ({
+                    ...b,
+                    labourMarginPercent: Number(e.target.value) || 0,
+                  }))
+                }
+                className="w-full rounded border border-black/[0.08] bg-[#fafaf8] px-2 py-1.5 text-[11px] text-black/60 outline-none"
+              />
+            </Field>
+            <Field label="Overheads ($)">
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={budget.overheads || ""}
+                onChange={(e) =>
+                  setBudget((b) => ({
+                    ...b,
+                    overheads: Number(e.target.value) || 0,
+                  }))
+                }
+                className="w-full rounded border border-black/[0.08] bg-[#fafaf8] px-2 py-1.5 text-[11px] text-black/60 outline-none"
+              />
+            </Field>
+            <div className="rounded border border-black/[0.06] bg-[#fafaf8] px-3 py-2">
+              <div className="text-[9px] uppercase tracking-[0.12em] text-black/30">
+                Direct cost
               </div>
-
-              <div className="space-y-3 p-5 text-sm">
-                <SummaryRow
-                  label="Subtotal"
-                  value={money(totals.subtotal)}
-                />
-
-                <SummaryRow
-                  label="GST"
-                  value={money(totals.gst)}
-                />
-
-                <div className="my-4 border-t border-black/[0.08]" />
-
-                <div className="flex items-baseline justify-between">
-                  <span className="font-medium">Total</span>
-                  <span className="text-xl font-medium">
-                    {money(totals.total)}
-                  </span>
-                </div>
+              <div className="mt-1 font-mono text-[14px] text-black/60">
+                {formatMoneyOrDash(directCostTotal)}
               </div>
             </div>
-
-            <div className="mt-4 rounded-lg border border-black/[0.08] bg-white p-5 text-xs text-black/50">
-              <p className="font-medium text-black/70">
-                Pricing source
-              </p>
-
-              <p className="mt-2 leading-5">
-                All rates are resolved from the current Catalogue.
-                Flashing prices use the flashing type&apos;s typical
-                girth and the matching global girth band.
-              </p>
+            <div className="rounded border border-black/[0.06] bg-[#fafaf8] px-3 py-2">
+              <div className="text-[9px] uppercase tracking-[0.12em] text-black/30">
+                Sales total
+              </div>
+              <div className="mt-1 font-mono text-[14px] text-black/70">
+                {formatMoneyOrDash(salesTotal)}
+              </div>
             </div>
-          </aside>
+            <div className="rounded border border-emerald-200 bg-emerald-50/50 px-3 py-2">
+              <div className="text-[9px] uppercase tracking-[0.12em] text-emerald-700/70">
+                Est. profit
+              </div>
+              <div className="mt-1 font-mono text-[14px] text-emerald-800">
+                {formatMoneyOrDash(estimatedProfit)}
+                {profitMarginPct != null
+                  ? ` · ${profitMarginPct.toFixed(1)}%`
+                  : ""}
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-2 border-t border-black/[0.06] pt-3 sm:grid-cols-2 lg:grid-cols-4">
+            <TotalRow
+              label="Direct material"
+              value={formatMoneyOrDash(directMaterial)}
+            />
+            <TotalRow
+              label="Direct labour"
+              value={formatMoneyOrDash(directLabour)}
+            />
+            <TotalRow
+              label={`Material sell (+${budget.materialMarginPercent}%)`}
+              value={formatMoneyOrDash(materialSell)}
+            />
+            <TotalRow
+              label={`Labour sell (+${budget.labourMarginPercent}%)`}
+              value={formatMoneyOrDash(labourSell)}
+            />
+            <TotalRow
+              label="Markup total"
+              value={formatMoneyOrDash(markupTotal)}
+            />
+            <TotalRow label="COGS" value={formatMoneyOrDash(cogs)} />
+            <TotalRow
+              label="Overheads"
+              value={formatMoneyOrDash(budget.overheads)}
+            />
+            {m2Rate != null && (
+              <TotalRow
+                label="M² rate (sales ÷ area)"
+                value={formatMoneyOrDash(m2Rate)}
+              />
+            )}
+          </div>
+        </section>
+
+        <div className="mb-4 flex flex-wrap gap-1 border-b border-black/[0.08]">
+          {(
+            [
+              { id: "roofing" as const, label: "Roofing" },
+              { id: "wall" as const, label: "Wall cladding" },
+              { id: "extras" as const, label: "Accessories & delivery" },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveSection(tab.id)}
+              className={
+                "px-4 py-2.5 text-[11px] tracking-wide transition-colors " +
+                (activeSection === tab.id
+                  ? "border-b-2 border-[#242422] font-medium text-black/70"
+                  : "text-black/35 hover:text-black/55")
+              }
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
-      </div>
-    </main>
+
+        <div className="space-y-5">
+          {activeSection === "roofing" && (
+            <>
+              <Card title="Profile & material">
+                <ScopeFields
+                  scope={roofing}
+                  profiles={roofProfiles}
+                  profileOptions={
+                    profileOptionsByProfile[roofing.profileId] ?? []
+                  }
+                  materials={materials}
+                  colours={coloursByMaterial[roofing.materialId] ?? []}
+                  underlays={underlays}
+                  unitCost={resolveMaterialUnitCost(roofing, materialPrices)}
+                  onChange={(u) => updateScope("roofing", u)}
+                />
+              </Card>
+              <Card title="Flashings">
+                <FlashingTable
+                  rows={roofingFlashings}
+                  flashingTypes={flashingTypes}
+                  materials={materials}
+                  flashingBands={flashingBands}
+                  flashingPrices={flashingPrices}
+                  onAdd={() => addFlashingRow("roofing")}
+                  onChange={(id, u) => updateFlashingRow("roofing", id, u)}
+                  onRemove={(id) => removeFlashingRow("roofing", id)}
+                />
+              </Card>
+              <Card title="Labour">
+                <LabourTable
+                  rows={roofingLabour}
+                  labourTypes={labourTypes}
+                  onAdd={() => addLabourRow("roofing")}
+                  onChange={(id, u) => updateLabourRow("roofing", id, u)}
+                  onRemove={(id) => removeLabourRow("roofing", id)}
+                />
+              </Card>
+            </>
+          )}
+
+          {activeSection === "wall" && (
+            <>
+              <Card title="Profile & material">
+                <ScopeFields
+                  scope={wallCladding}
+                  profiles={wallProfiles}
+                  profileOptions={
+                    profileOptionsByProfile[wallCladding.profileId] ?? []
+                  }
+                  materials={materials}
+                  colours={coloursByMaterial[wallCladding.materialId] ?? []}
+                  underlays={underlays}
+                  unitCost={resolveMaterialUnitCost(
+                    wallCladding,
+                    materialPrices,
+                  )}
+                  onChange={(u) => updateScope("wallCladding", u)}
+                />
+              </Card>
+              <Card title="Flashings">
+                <FlashingTable
+                  rows={wallFlashings}
+                  flashingTypes={flashingTypes}
+                  materials={materials}
+                  flashingBands={flashingBands}
+                  flashingPrices={flashingPrices}
+                  onAdd={() => addFlashingRow("wall")}
+                  onChange={(id, u) => updateFlashingRow("wall", id, u)}
+                  onRemove={(id) => removeFlashingRow("wall", id)}
+                />
+              </Card>
+              <Card title="Labour">
+                <LabourTable
+                  rows={wallLabour}
+                  labourTypes={labourTypes}
+                  onAdd={() => addLabourRow("wall")}
+                  onChange={(id, u) => updateLabourRow("wall", id, u)}
+                  onRemove={(id) => removeLabourRow("wall", id)}
+                />
+              </Card>
+            </>
+          )}
+
+          {activeSection === "extras" && (
+            <>
+              <Card title="Accessories">
+                <AccessoryTable
+                  rows={accessoryRows}
+                  accessories={accessoryOptions}
+                  onAdd={addAccessoryRow}
+                  onChange={updateAccessoryRow}
+                  onRemove={removeAccessoryRow}
+                />
+              </Card>
+              <Card title="Delivery / transport">
+                <div className="max-w-xs">
+                  <Field label="Delivery cost ($)">
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={budget.delivery || ""}
+                      onChange={(e) =>
+                        setBudget((b) => ({
+                          ...b,
+                          delivery: Number(e.target.value) || 0,
+                        }))
+                      }
+                      className="w-full rounded border border-black/[0.08] bg-white px-2 py-1.5 text-[10px] text-black/55 outline-none"
+                    />
+                  </Field>
+                  <p className="mt-2 text-[10px] text-black/30">
+                    Added to direct material cost in the budget.
+                  </p>
+                </div>
+              </Card>
+            </>
+          )}
+        </div>
+      </main>
+    </div>
   );
 }
+// --- Reusable sub-sections ---
 
-function SummaryRow({
-  label,
-  value,
+function ScopeFields({
+  scope,
+  profiles,
+  profileOptions,
+  materials,
+  colours,
+  underlays,
+  unitCost,
+  onChange,
 }: {
-  label: string;
-  value: string;
+  scope: ScopeState;
+  profiles: Profile[];
+  profileOptions: ProfileOption[];
+  materials: Material[];
+  colours: MaterialColour[];
+  underlays: Underlay[];
+  unitCost: number | null;
+  onChange: (updates: Partial<ScopeState>) => void;
 }) {
+  const selectedProfile = profiles.find((p) => p.id === scope.profileId);
+  const measurementLabel =
+    selectedProfile?.measurementType === "width" ? "Width" : "Gauge";
+  const lineTotal =
+    unitCost != null && scope.linealMetres
+      ? unitCost * scope.linealMetres
+      : unitCost == null
+        ? null
+        : 0;
+
   return (
-    <div className="flex items-center justify-between text-black/60">
-      <span>{label}</span>
-      <span>{value}</span>
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+        <Field label="Profile">
+          <select
+            value={scope.profileId}
+            onChange={(e) => onChange({ profileId: e.target.value })}
+            className="w-full rounded border border-black/[0.08] bg-white px-2 py-1.5 text-[10px] text-black/55 outline-none disabled:opacity-40"
+          >
+            <option value="">Select...</option>
+            {profiles.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Field label={measurementLabel}>
+          <select
+            value={scope.profileOptionId}
+            onChange={(e) => onChange({ profileOptionId: e.target.value })}
+            disabled={!scope.profileId}
+            className="w-full rounded border border-black/[0.08] bg-white px-2 py-1.5 text-[10px] text-black/55 outline-none disabled:opacity-40"
+          >
+            <option value="">Select...</option>
+            {profileOptions.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.value}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Field label="Material">
+          <select
+            value={scope.materialId}
+            onChange={(e) => onChange({ materialId: e.target.value })}
+            className="w-full rounded border border-black/[0.08] bg-white px-2 py-1.5 text-[10px] text-black/55 outline-none disabled:opacity-40"
+          >
+            <option value="">Select...</option>
+            {materials.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Field label="Colour">
+          <select
+            value={scope.colourId}
+            onChange={(e) => onChange({ colourId: e.target.value })}
+            disabled={!scope.materialId}
+            className="w-full rounded border border-black/[0.08] bg-white px-2 py-1.5 text-[10px] text-black/55 outline-none disabled:opacity-40"
+          >
+            <option value="">Select...</option>
+            {colours.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Field label="Area (m²)">
+          <input
+            type="number"
+            min="0"
+            step="any"
+            value={scope.area || ""}
+            onChange={(e) =>
+              onChange({ area: Number(e.target.value) || 0 })
+            }
+            className="w-full rounded border border-black/[0.08] bg-white px-2 py-1.5 text-[10px] text-black/55 outline-none disabled:opacity-40"
+          />
+        </Field>
+
+        <Field label="Quantity (Lm)">
+          <input
+            type="number"
+            min="0"
+            step="any"
+            value={scope.linealMetres || ""}
+            onChange={(e) =>
+              onChange({ linealMetres: Number(e.target.value) || 0 })
+            }
+            className="w-full rounded border border-black/[0.08] bg-white px-2 py-1.5 text-[10px] text-black/55 outline-none disabled:opacity-40"
+          />
+        </Field>
+
+        <Field label="Underlay">
+          <select
+            value={scope.underlayId}
+            onChange={(e) => onChange({ underlayId: e.target.value })}
+            className="w-full rounded border border-black/[0.08] bg-white px-2 py-1.5 text-[10px] text-black/55 outline-none disabled:opacity-40"
+          >
+            <option value="">Select...</option>
+            {underlays.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-4 text-[10px] text-black/40">
+        <span>
+          Rate:{" "}
+          <span className="font-mono text-black/55">
+            {unitCost != null
+              ? `${formatMoneyOrDash(unitCost)}/Lm`
+              : "— (no matching price)"}
+          </span>
+        </span>
+        <span>
+          Profile total:{" "}
+          <span className="font-mono text-black/55">
+            {formatMoneyOrDash(lineTotal)}
+          </span>
+        </span>
+      </div>
     </div>
   );
 }
 
-type ScopeSectionProps = {
-  title: ScopeName;
-  scope: ScopeState;
-  profiles: Profile[];
-  materials: Material[];
-  underlays: Underlay[];
-  profileOptions: Record<string, ProfileOption[]>;
-  colours: Record<string, MaterialColour[]>;
-  onChange: (updates: Partial<ScopeState>) => void;
-  getPrice: (scope: ScopeState) => number | null;
-
-  flashingRows: FlashingRow[];
+function FlashingTable({
+  rows,
+  flashingTypes,
+  materials,
+  flashingBands,
+  flashingPrices,
+  onAdd,
+  onChange,
+  onRemove,
+}: {
+  rows: FlashingRow[];
   flashingTypes: FlashingType[];
+  materials: Material[];
   flashingBands: FlashingGirthBand[];
-  onAddFlashing: () => void;
-  onUpdateFlashing: (
-    id: string,
-    updates: Partial<FlashingRow>,
-  ) => void;
-  onRemoveFlashing: (id: string) => void;
-
-  labourRows: LabourRow[];
-  labourTypes: LabourType[];
-  onAddLabour: () => void;
-  onUpdateLabour: (
-    id: string,
-    updates: Partial<LabourRow>,
-  ) => void;
-  onRemoveLabour: (id: string) => void;
-
-  getFlashingBand: (
-    flashingTypeId: string,
-  ) => FlashingGirthBand | null;
-
-  getFlashingPrice: (
-    flashingTypeId: string,
-    materialId: string,
-  ) => number | null;
-
-  flashingCost: (row: FlashingRow) => number | null;
-  labourCost: (row: LabourRow) => number | null;
-};
-
-function ScopeSection(props: ScopeSectionProps) {
-  const {
-    title,
-    scope,
-    profiles,
-    materials,
-    underlays,
-    profileOptions,
-    colours,
-    onChange,
-    getPrice,
-    flashingRows,
-    flashingTypes,
-    flashingBands,
-    onAddFlashing,
-    onUpdateFlashing,
-    onRemoveFlashing,
-    labourRows,
-    labourTypes,
-    onAddLabour,
-    onUpdateLabour,
-    onRemoveLabour,
-    getFlashingBand,
-    getFlashingPrice,
-    flashingCost,
-    labourCost,
-  } = props;
-
-  const selectedProfile = profiles.find(
-    (item) => item.id === scope.profileId,
-  );
-
-  const options = scope.profileId
-    ? profileOptions[scope.profileId] ?? []
-    : [];
-
-  const availableColours = scope.materialId
-  ? props.colours[scope.materialId] ?? []
-  : [];
-
-  const materialPrice = getPrice(scope);
-
-  const underlay = underlays.find(
-    (item) => item.id === scope.underlayId,
-  );
-
+  flashingPrices: FlashingPrice[];
+  onAdd: () => void;
+  onChange: (id: string, updates: Partial<FlashingRow>) => void;
+  onRemove: (id: string) => void;
+}) {
   return (
-    <section className="rounded-lg border border-black/[0.08] bg-white">
-      <div className="border-b border-black/[0.08] px-5 py-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 className="font-medium">{title}</h2>
-            <p className="mt-1 text-xs text-black/45">
-              Select the catalogue items and enter the measured area.
-            </p>
-          </div>
+    <div>
+      {rows.length === 0 ? (
+        <div className="text-[11px] text-black/25">No flashing lines.</div>
+      ) : (
+        <div className="space-y-4">
+          {rows.map((row) => {
+            const isCustom = !row.flashingTypeId;
+            const selectValue = isCustom ? CUSTOM_FLASHING : row.flashingTypeId;
+            const band = getFlashingBand(
+              row.girth,
+              flashingBands,
+              row.flashingTypeId || null,
+            );
+            const rate = resolveFlashingUnitCost(
+              band,
+              row.materialId,
+              flashingPrices,
+            );
+            const lineTotal =
+              rate != null ? rate * row.length * row.quantity : null;
 
-          {materialPrice != null && scope.area > 0 && (
-            <div className="text-right">
-              <div className="text-xs text-black/40">
-                Material rate
-              </div>
-              <div className="font-medium">
-                {money(materialPrice)} / m²
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="p-5">
-        <div className="grid gap-4 md:grid-cols-2">
-          <Field label="Profile">
-            <select
-              className={inputClass}
-              value={scope.profileId}
-              onChange={(event) =>
-                onChange({
-                  profileId: event.target.value,
-                })
-              }
-            >
-              <option value="">Select profile…</option>
-
-              {profiles.map((profile) => (
-                <option
-                  key={profile.id}
-                  value={profile.id}
-                >
-                  {profile.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-
-          <Field
-            label={
-              selectedProfile?.measurementType === "gauge"
-                ? "Gauge"
-                : "Width"
-            }
-          >
-            <select
-              className={inputClass}
-              value={scope.profileOptionId}
-              onChange={(event) =>
-                onChange({
-                  profileOptionId: event.target.value,
-                })
-              }
-              disabled={!scope.profileId}
-            >
-              <option value="">
-                {scope.profileId
-                  ? "Select option…"
-                  : "Select profile first"}
-              </option>
-
-              {options.map((option) => (
-                <option
-                  key={option.id}
-                  value={option.id}
-                >
-                  {option.value}
-                </option>
-              ))}
-            </select>
-          </Field>
-
-          <Field label="Material">
-            <select
-              className={inputClass}
-              value={scope.materialId}
-              onChange={(event) =>
-                onChange({
-                  materialId: event.target.value,
-                })
-              }
-            >
-              <option value="">Select material…</option>
-
-              {materials.map((material) => (
-                <option
-                  key={material.id}
-                  value={material.id}
-                >
-                  {material.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-
-          <Field label="Colour">
-            <select
-              className={inputClass}
-              value={scope.colourId}
-              onChange={(event) =>
-                onChange({
-                  colourId: event.target.value,
-                })
-              }
-              disabled={!scope.materialId}
-            >
-              <option value="">
-                {scope.materialId
-                  ? "Select colour…"
-                  : "Select material first"}
-              </option>
-
-              {availableColours.map((colour) => (
-                <option
-                  key={colour.id}
-                  value={colour.id}
-                >
-                  {colour.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-
-          <Field label="Area (m²)">
-            <input
-              className={numberInputClass}
-              type="number"
-              min="0"
-              step="0.01"
-              value={scope.area}
-              onChange={(event) =>
-                onChange({
-                  area: numberValue(event.target.value),
-                })
-              }
-            />
-          </Field>
-
-          <Field label="Underlay">
-            <select
-              className={inputClass}
-              value={scope.underlayId}
-              onChange={(event) =>
-                onChange({
-                  underlayId: event.target.value,
-                })
-              }
-            >
-              <option value="">No underlay</option>
-
-              {underlays.map((item) => (
-                <option
-                  key={item.id}
-                  value={item.id}
-                >
-                  {item.name}
-                  {item.unitCost != null
-                    ? ` — ${money(item.unitCost)}/${item.unit}`
-                    : ""}
-                </option>
-              ))}
-            </select>
-          </Field>
-        </div>
-
-        <div className="mt-5 rounded-md bg-black/[0.025] p-4">
-          <div className="grid gap-3 text-sm md:grid-cols-3">
-            <div>
-              <div className="text-xs text-black/40">
-                Material
-              </div>
-              <div className="mt-1">
-                {materialPrice != null
-                  ? `${money(materialPrice)} / m²`
-                  : "—"}
-              </div>
-            </div>
-
-            <div>
-              <div className="text-xs text-black/40">
-                Material total
-              </div>
-              <div className="mt-1">
-                {materialPrice != null && scope.area > 0
-                  ? money(materialPrice * scope.area)
-                  : "—"}
-              </div>
-            </div>
-
-            <div>
-              <div className="text-xs text-black/40">
-                Underlay total
-              </div>
-              <div className="mt-1">
-                {underlay?.unitCost != null &&
-                scope.area > 0
-                  ? money(
-                      underlay.unitCost * scope.area,
-                    )
-                  : "—"}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-8 border-t border-black/[0.08] pt-5">
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-medium">
-                Flashings
-              </h3>
-              <p className="mt-1 text-xs text-black/45">
-                Typical girth determines the applicable global
-                girth band and material price.
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={onAddFlashing}
-              className="rounded-md border border-black/[0.12] px-3 py-2 text-xs hover:bg-black/[0.03]"
-            >
-              + Add flashing
-            </button>
-          </div>
-
-          {flashingRows.length === 0 ? (
-            <p className="text-sm text-black/40">
-              No flashings added.
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {flashingRows.map((row) => {
-                const type = flashingTypes.find(
-                  (item) =>
-                    item.id === row.flashingTypeId,
-                );
-
-                const band = getFlashingBand(
-                  row.flashingTypeId,
-                );
-
-                const price = getFlashingPrice(
-                  row.flashingTypeId,
-                  row.materialId,
-                );
-
-                return (
-                  <div
-                    key={row.id}
-                    className="rounded-md border border-black/[0.08] p-3"
-                  >
-                    <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_120px_100px_100px_40px]">
-                      <select
-                        className={inputClass}
-                        value={row.flashingTypeId}
-                        onChange={(event) =>
-                          onUpdateFlashing(row.id, {
-                            flashingTypeId:
-                              event.target.value,
-                          })
-                        }
-                      >
-                        <option value="">
-                          Select flashing…
-                        </option>
-
-                        {flashingTypes.map((item) => (
-                          <option
-                            key={item.id}
-                            value={item.id}
-                          >
-                            {item.name}
-                          </option>
-                        ))}
-                      </select>
-
-                      <select
-                        className={inputClass}
-                        value={row.materialId}
-                        onChange={(event) =>
-                          onUpdateFlashing(row.id, {
-                            materialId:
-                              event.target.value,
-                          })
-                        }
-                      >
-                        <option value="">
-                          Select material…
-                        </option>
-
-                        {materials.map((item) => (
-                          <option
-                            key={item.id}
-                            value={item.id}
-                          >
-                            {item.name}
-                          </option>
-                        ))}
-                      </select>
-
-                      <input
-                        className={numberInputClass}
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        placeholder="Length"
-                        value={row.length}
-                        onChange={(event) =>
-                          onUpdateFlashing(row.id, {
-                            length: numberValue(
-                              event.target.value,
-                            ),
-                          })
-                        }
-                      />
-
-                      <input
-                        className={numberInputClass}
-                        type="number"
-                        min="1"
-                        step="1"
-                        value={row.quantity}
-                        onChange={(event) =>
-                          onUpdateFlashing(row.id, {
-                            quantity: numberValue(
-                              event.target.value,
-                            ),
-                          })
-                        }
-                      />
-
-                      <div className="flex items-center justify-end text-sm">
-                        {money(flashingCost(row))}
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onRemoveFlashing(row.id)
-                        }
-                        className="text-black/35 hover:text-red-600"
-                        aria-label="Remove flashing"
-                      >
-                        ×
-                      </button>
-                    </div>
-
-                    <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-black/45">
-                      <span>
-                        Typical girth:{" "}
-                        {type?.typicalGirth != null
-                          ? `${type.typicalGirth}G`
-                          : "—"}
-                      </span>
-
-                      <span>
-                        Girth band:{" "}
-                        {band
-                          ? `${band.min_girth}-${band.max_girth}G`
-                          : "—"}
-                      </span>
-
-                      <span>
-                        Rate:{" "}
-                        {price != null
-                          ? `${money(price)} / m`
-                          : "—"}
-                      </span>
-
-                      {type && (
-                        <span>
-                          Unit: {type.unit}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        <div className="mt-8 border-t border-black/[0.08] pt-5">
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-medium">
-                Labour
-              </h3>
-              <p className="mt-1 text-xs text-black/45">
-                Labour rate comes from the catalogue.
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={onAddLabour}
-              className="rounded-md border border-black/[0.12] px-3 py-2 text-xs hover:bg-black/[0.03]"
-            >
-              + Add labour
-            </button>
-          </div>
-
-          {labourRows.length === 0 ? (
-            <p className="text-sm text-black/40">
-              No labour added.
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {labourRows.map((row) => {
-                const labour = labourTypes.find(
-                  (item) =>
-                    item.id === row.labourTypeId,
-                );
-
-                return (
-                  <div
-                    key={row.id}
-                    className="grid gap-3 rounded-md border border-black/[0.08] p-3 md:grid-cols-[minmax(0,1fr)_120px_120px_120px_40px]"
-                  >
+            return (
+              <div
+                key={row.id}
+                className="rounded border border-black/[0.06] bg-white/50 p-3"
+              >
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                  <Field label="Flashing">
                     <select
-                      className={inputClass}
-                      value={row.labourTypeId}
-                      onChange={(event) =>
-                        onUpdateLabour(row.id, {
-                          labourTypeId:
-                            event.target.value,
+                      value={selectValue}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === CUSTOM_FLASHING) {
+                          onChange(row.id, {
+                            flashingTypeId: "",
+                            customName: row.customName || "",
+                          });
+                        } else {
+                          onChange(row.id, { flashingTypeId: v });
+                        }
+                      }}
+                      className="w-full rounded border border-black/[0.08] bg-white px-2 py-1.5 text-[10px] text-black/55 outline-none"
+                    >
+                      <option value="">Select...</option>
+                      {flashingTypes.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}
+                        </option>
+                      ))}
+                      <option value={CUSTOM_FLASHING}>Custom flashing</option>
+                    </select>
+                  </Field>
+
+                  {isCustom && (
+                    <Field label="Description">
+                      <input
+                        type="text"
+                        placeholder="Custom description"
+                        value={row.customName}
+                        onChange={(e) =>
+                          onChange(row.id, { customName: e.target.value })
+                        }
+                        className="w-full rounded border border-black/[0.08] bg-white px-2 py-1.5 text-[10px] text-black/55 outline-none"
+                      />
+                    </Field>
+                  )}
+
+                  <Field label="Girth (mm)">
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      placeholder="e.g. 425"
+                      value={row.girth || ""}
+                      onChange={(e) =>
+                        onChange(row.id, {
+                          girth: Number(e.target.value) || 0,
                         })
                       }
-                    >
-                      <option value="">
-                        Select labour…
-                      </option>
+                      className="w-full rounded border border-black/[0.08] bg-white px-2 py-1.5 text-[10px] text-black/55 outline-none"
+                    />
+                  </Field>
 
-                      {labourTypes.map((item) => (
-                        <option
-                          key={item.id}
-                          value={item.id}
-                        >
-                          {item.name}
+                  <Field label="Material">
+                    <select
+                      value={row.materialId}
+                      onChange={(e) =>
+                        onChange(row.id, { materialId: e.target.value })
+                      }
+                      className="w-full rounded border border-black/[0.08] bg-white px-2 py-1.5 text-[10px] text-black/55 outline-none"
+                    >
+                      <option value="">Select...</option>
+                      {materials.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
                         </option>
                       ))}
                     </select>
+                  </Field>
 
+                  <Field label="Length (m)">
                     <input
-                      className={numberInputClass}
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={row.quantity}
-                      onChange={(event) =>
-                        onUpdateLabour(row.id, {
-                          quantity: numberValue(
-                            event.target.value,
-                          ),
-                        })
-                      }
-                    />
-
-                    <input
-                      className={numberInputClass}
                       type="number"
                       min="0"
-                      step="0.25"
-                      value={row.hours}
-                      onChange={(event) =>
-                        onUpdateLabour(row.id, {
-                          hours: numberValue(
-                            event.target.value,
-                          ),
+                      step="any"
+                      placeholder="Length"
+                      value={row.length || ""}
+                      onChange={(e) =>
+                        onChange(row.id, {
+                          length: Number(e.target.value) || 0,
                         })
                       }
+                      className="w-full rounded border border-black/[0.08] bg-white px-2 py-1.5 text-[10px] text-black/55 outline-none"
                     />
+                  </Field>
 
-                    <div className="flex items-center justify-end text-sm">
-                      {labour?.rate != null &&
-                      row.hours > 0 &&
-                      row.quantity > 0
-                        ? money(
-                            labour.rate *
-                              row.hours *
-                              row.quantity,
-                          )
-                        : "—"}
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onRemoveLabour(row.id)
+                  <Field label="Qty">
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      placeholder="Qty"
+                      value={row.quantity || ""}
+                      onChange={(e) =>
+                        onChange(row.id, {
+                          quantity: Number(e.target.value) || 0,
+                        })
                       }
-                      className="text-black/35 hover:text-red-600"
-                      aria-label="Remove labour"
-                    >
-                      ×
-                    </button>
+                      className="w-full rounded border border-black/[0.08] bg-white px-2 py-1.5 text-[10px] text-black/55 outline-none"
+                    />
+                  </Field>
+                </div>
+
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-[10px] text-black/40">
+                    {band ? (
+                      <>
+                        Girth band: {band.minGirth}–{band.maxGirth}G · Rate:{" "}
+                        <span className="font-mono text-black/55">
+                          {rate != null
+                            ? `${formatMoneyOrDash(rate)}/m`
+                            : "— (no price for material)"}
+                        </span>
+                      </>
+                    ) : row.girth > 0 ? (
+                      <span className="text-amber-700">
+                        No pricing band found for girth {row.girth}G
+                      </span>
+                    ) : (
+                      <span>Enter girth to resolve pricing band</span>
+                    )}
+                    {" · "}
+                    Total:{" "}
+                    <span className="font-mono text-black/55">
+                      {formatMoneyOrDash(lineTotal)}
+                    </span>
                   </div>
-                );
-              })}
-            </div>
-          )}
+                  <button
+                    type="button"
+                    onClick={() => onRemove(row.id)}
+                    className="text-[12px] text-black/20 hover:text-red-500"
+                  >
+                    × Remove
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </div>
-      </div>
-    </section>
+      )}
+      <button
+        type="button"
+        onClick={onAdd}
+        className="mt-3 text-[10px] text-black/40 hover:text-black/70"
+      >
+        + Add flashing line
+      </button>
+    </div>
+  );
+}
+
+function LabourTable({
+  rows,
+  labourTypes,
+  onAdd,
+  onChange,
+  onRemove,
+}: {
+  rows: LabourRow[];
+  labourTypes: LabourType[];
+  onAdd: () => void;
+  onChange: (id: string, updates: Partial<LabourRow>) => void;
+  onRemove: (id: string) => void;
+}) {
+  return (
+    <div>
+      {rows.length === 0 ? (
+        <div className="text-[11px] text-black/25">No labour lines.</div>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((row) => (
+            <div
+              key={row.id}
+              className="grid grid-cols-[1.4fr_0.8fr_0.8fr_0.8fr_30px] items-center gap-2"
+            >
+              <select
+                value={row.labourTypeId}
+                onChange={(e) =>
+                  onChange(row.id, { labourTypeId: e.target.value })
+                }
+                className="w-full rounded border border-black/[0.08] bg-white px-2 py-1.5 text-[10px] text-black/55 outline-none disabled:opacity-40"
+              >
+                <option value="">Labour type...</option>
+                {labourTypes.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="number"
+                min="0"
+                step="any"
+                placeholder="Qty"
+                value={row.quantity}
+                onChange={(e) =>
+                  onChange(row.id, { quantity: Number(e.target.value) })
+                }
+                className="w-full rounded border border-black/[0.08] bg-white px-2 py-1.5 text-[10px] text-black/55 outline-none disabled:opacity-40"
+              />
+              <input
+                type="number"
+                min="0"
+                step="any"
+                placeholder="Hours"
+                value={row.hours}
+                onChange={(e) =>
+                  onChange(row.id, { hours: Number(e.target.value) })
+                }
+                className="w-full rounded border border-black/[0.08] bg-white px-2 py-1.5 text-[10px] text-black/55 outline-none disabled:opacity-40"
+              />
+              <input
+                type="number"
+                min="0"
+                step="any"
+                placeholder="Rate"
+                value={row.rate}
+                onChange={(e) =>
+                  onChange(row.id, { rate: Number(e.target.value) })
+                }
+                className="w-full rounded border border-black/[0.08] bg-white px-2 py-1.5 text-[10px] text-black/55 outline-none disabled:opacity-40"
+              />
+              <button
+                type="button"
+                onClick={() => onRemove(row.id)}
+                className="text-[12px] text-black/20 hover:text-red-500"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={onAdd}
+        className="mt-3 text-[10px] text-black/40 hover:text-black/70"
+      >
+        + Add labour line
+      </button>
+    </div>
+  );
+}
+
+function AccessoryTable({
+  rows,
+  accessories,
+  onAdd,
+  onChange,
+  onRemove,
+}: {
+  rows: AccessoryRow[];
+  accessories: Accessory[];
+  onAdd: () => void;
+  onChange: (id: string, updates: Partial<AccessoryRow>) => void;
+  onRemove: (id: string) => void;
+}) {
+  return (
+    <div>
+      {rows.length === 0 ? (
+        <div className="text-[11px] text-black/25">No accessory lines.</div>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((row) => (
+            <div
+              key={row.id}
+              className="grid grid-cols-[1.7fr_1fr_30px] items-center gap-2"
+            >
+              <select
+                value={row.accessoryId}
+                onChange={(e) =>
+                  onChange(row.id, { accessoryId: e.target.value })
+                }
+                className="w-full rounded border border-black/[0.08] bg-white px-2 py-1.5 text-[10px] text-black/55 outline-none disabled:opacity-40"
+              >
+                <option value="">Accessory...</option>
+                {accessories.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="number"
+                min="0"
+                step="any"
+                placeholder="Qty"
+                value={row.quantity}
+                onChange={(e) =>
+                  onChange(row.id, { quantity: Number(e.target.value) })
+                }
+                className="w-full rounded border border-black/[0.08] bg-white px-2 py-1.5 text-[10px] text-black/55 outline-none disabled:opacity-40"
+              />
+              <button
+                type="button"
+                onClick={() => onRemove(row.id)}
+                className="text-[12px] text-black/20 hover:text-red-500"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={onAdd}
+        className="mt-3 text-[10px] text-black/40 hover:text-black/70"
+      >
+        + Add accessory line
+      </button>
+    </div>
   );
 }
 
@@ -2031,10 +1713,71 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-xs text-black/50">
+      <span className="text-[9px] uppercase tracking-[0.12em] text-black/25">
         {label}
       </span>
-      {children}
+      <div className="mt-1">{children}</div>
     </label>
   );
+}
+
+function Card({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-lg border border-black/[0.08] bg-[#fafaf8]">
+      <div className="border-b border-black/[0.06] px-5 py-3">
+        <h2 className="text-[10px] uppercase tracking-[0.15em] text-black/30">
+          {title}
+        </h2>
+      </div>
+      <div className="p-5">{children}</div>
+    </section>
+  );
+}
+
+function Detail({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div>
+      <div className="text-[9px] uppercase tracking-[0.12em] text-black/25">
+        {label}
+      </div>
+      <div
+        className={
+          "mt-1 text-[11px] text-black/55" + (mono ? " font-mono" : "")
+        }
+      >
+        {value || "—"}
+      </div>
+    </div>
+  );
+}
+
+function TotalRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-[10px] text-black/35">{label}</span>
+      <span className="font-mono text-[11px] text-black/50">{value}</span>
+    </div>
+  );
+}
+
+function formatMoneyOrDash(value: number | null): string {
+  if (value === null) return "—";
+  return new Intl.NumberFormat("en-NZ", {
+    style: "currency",
+    currency: "NZD",
+  }).format(value);
 }
