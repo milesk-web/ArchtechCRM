@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   type Profile,
   type ProfileOption,
@@ -46,7 +46,6 @@ type MaterialPrice = {
 
 type FlashingGirthBand = {
   id: string;
-  flashingTypeId: string;
   minGirth: number;
   maxGirth: number;
   active: boolean;
@@ -95,12 +94,8 @@ export default function CataloguePage() {
   const [flashingBands, setFlashingBands] = useState<FlashingGirthBand[]>([]);
   const [flashingPrices, setFlashingPrices] = useState<FlashingPrice[]>([]);
 
-  const [selectedFlashingType, setSelectedFlashingType] = useState("");
   const [flashingMinGirth, setFlashingMinGirth] = useState("");
   const [flashingMaxGirth, setFlashingMaxGirth] = useState("");
-  const [selectedFlashingBand, setSelectedFlashingBand] = useState("");
-  const [flashingPriceMaterial, setFlashingPriceMaterial] = useState("");
-  const [flashingPriceCost, setFlashingPriceCost] = useState("");
 
   const [selectedProfile, setSelectedProfile] = useState("");
   const [selectedMaterial, setSelectedMaterial] = useState("");
@@ -165,41 +160,6 @@ export default function CataloguePage() {
     }
   }, [pricingMaterial]);
 
-  useEffect(() => {
-    if (selectedFlashingType) {
-      void loadFlashingBandsFor(selectedFlashingType);
-    } else {
-      setFlashingBands([]);
-      setSelectedFlashingBand("");
-    }
-  }, [selectedFlashingType]);
-
-  useEffect(() => {
-    if (selectedFlashingBand) {
-      void loadFlashingPricesFor(selectedFlashingBand);
-    } else {
-      setFlashingPrices([]);
-    }
-  }, [selectedFlashingBand]);
-
-  const pricingProfiles = useMemo(() => {
-    if (!pricingMaterial) return profiles;
-
-    const materialPriceProfileIds = new Set(
-      prices
-        .filter((price) => price.materialId === pricingMaterial)
-        .map((price) => price.profileId),
-    );
-
-    if (materialPriceProfileIds.size === 0) {
-      return profiles;
-    }
-
-    return profiles.filter((profile) =>
-      materialPriceProfileIds.has(profile.id),
-    );
-  }, [pricingMaterial, prices, profiles]);
-
   const selectedPricingProfile = profiles.find(
     (profile) => profile.id === pricingProfile,
   );
@@ -245,35 +205,17 @@ export default function CataloguePage() {
       setFlashingPrices(flashingPricesData);
 
       if (
-        (!selectedFlashingType ||
-          !flashingsData.some(
-            (flashing) => flashing.id === selectedFlashingType,
-          )) &&
-        flashingsData.length > 0
+        selectedProfile &&
+        !profilesData.some((profile) => profile.id === selectedProfile)
       ) {
-        setSelectedFlashingType(flashingsData[0].id);
+        setSelectedProfile("");
       }
 
       if (
-        selectedFlashingType &&
-        !flashingsData.some(
-          (flashing) => flashing.id === selectedFlashingType,
-        )
+        selectedMaterial &&
+        !materialsData.some((material) => material.id === selectedMaterial)
       ) {
-        setSelectedFlashingType(flashingsData[0]?.id ?? "");
-      }
-
-      if (
-        selectedFlashingBand &&
-        !flashingBandsData.some(
-          (band) => band.id === selectedFlashingBand,
-        )
-      ) {
-        setSelectedFlashingBand("");
-      }
-
-      if (!flashingPriceMaterial && materialsData.length > 0) {
-        setFlashingPriceMaterial(materialsData[0].id);
+        setSelectedMaterial("");
       }
 
       if (!selectedProfile && profilesData.length > 0) {
@@ -284,8 +226,22 @@ export default function CataloguePage() {
         setSelectedMaterial(materialsData[0].id);
       }
 
+      if (
+        pricingMaterial &&
+        !materialsData.some((material) => material.id === pricingMaterial)
+      ) {
+        setPricingMaterial("");
+      }
+
       if (!pricingMaterial && materialsData.length > 0) {
         setPricingMaterial(materialsData[0].id);
+      }
+
+      if (
+        pricingProfile &&
+        !profilesData.some((profile) => profile.id === pricingProfile)
+      ) {
+        setPricingProfile("");
       }
     } catch (err) {
       setError(
@@ -360,6 +316,8 @@ export default function CataloguePage() {
       name: String(row.name),
       unit: String(row.unit ?? ""),
       unitCost: row.unit_cost == null ? null : Number(row.unit_cost),
+      typicalGirth:
+        row.typical_girth == null ? null : Number(row.typical_girth),
       sortOrder: Number(row.sort_order),
     }));
   }
@@ -369,7 +327,6 @@ export default function CataloguePage() {
       "flashing_girth_bands",
       (row) => ({
         id: String(row.id),
-        flashingTypeId: String(row.flashing_type_id),
         minGirth: Number(row.min_girth),
         maxGirth: Number(row.max_girth),
         active: Boolean(row.active),
@@ -386,59 +343,6 @@ export default function CataloguePage() {
       unitCost: Number(row.unit_cost),
       active: Boolean(row.active),
     }));
-  }
-
-  async function loadFlashingBandsFor(typeId: string) {
-    try {
-      const bands = await fetchCatalogue<FlashingGirthBand>(
-        "flashing_girth_bands",
-        (row) => ({
-          id: String(row.id),
-          flashingTypeId: String(row.flashing_type_id),
-          minGirth: Number(row.min_girth),
-          maxGirth: Number(row.max_girth),
-          active: Boolean(row.active),
-          sortOrder: Number(row.sort_order),
-        }),
-        { flashing_type_id: typeId },
-      );
-
-      setFlashingBands(bands);
-
-      if (!bands.some((band) => band.id === selectedFlashingBand)) {
-        setSelectedFlashingBand(bands[0]?.id ?? "");
-      }
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to load flashing girth bands.",
-      );
-    }
-  }
-
-  async function loadFlashingPricesFor(bandId: string) {
-    try {
-      const pricesForBand = await fetchCatalogue<FlashingPrice>(
-        "flashing_prices",
-        (row) => ({
-          id: String(row.id),
-          flashingGirthBandId: String(row.flashing_girth_band_id),
-          materialId: String(row.material_id),
-          unitCost: Number(row.unit_cost),
-          active: Boolean(row.active),
-        }),
-        { flashing_girth_band_id: bandId },
-      );
-
-      setFlashingPrices(pricesForBand);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to load flashing prices.",
-      );
-    }
   }
 
   async function loadLabour(): Promise<LabourType[]> {
@@ -492,20 +396,7 @@ export default function CataloguePage() {
   }
 
   async function loadPrices(): Promise<MaterialPrice[]> {
-    const response = await fetch("/api/catalogue?table=material_prices", {
-      cache: "no-store",
-    });
-
-    const result = await response.json().catch(() => null);
-
-    if (!response.ok) {
-      throw new Error(
-        result?.error ||
-          `Unable to load material prices (${response.status}).`,
-      );
-    }
-
-    return (result?.data ?? []).map((row: Record<string, unknown>) => ({
+    return fetchCatalogue<MaterialPrice>("material_prices", (row) => ({
       id: String(row.id),
       materialId: String(row.material_id),
       profileId: String(row.profile_id),
@@ -601,6 +492,50 @@ export default function CataloguePage() {
         err instanceof Error
           ? err.message
           : "Unable to create catalogue item.",
+      );
+      return false;
+    }
+  }
+
+  async function updateCatalogueItem(
+    table: CatalogueTable,
+    id: string,
+    data: Record<string, unknown>,
+  ): Promise<boolean> {
+    setError("");
+    setNotice("");
+
+    try {
+      const response = await fetch("/api/catalogue", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          table,
+          id,
+          data,
+        }),
+      });
+
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        setError(
+          `CATALOGUE API ERROR ${response.status}: ${
+            result?.error || "No error message returned."
+          }`,
+        );
+        return false;
+      }
+
+      setNotice("Updated successfully.");
+      return true;
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to update catalogue item.",
       );
       return false;
     }
@@ -786,10 +721,32 @@ export default function CataloguePage() {
       return;
     }
 
+    const typicalGirthInput = window.prompt(
+      "Typical girth (e.g. 425). Leave blank if unknown.",
+    );
+
+    if (typicalGirthInput === null) {
+      return;
+    }
+
+    const typicalGirthText = typicalGirthInput.trim();
+
+    let typicalGirth: number | null = null;
+
+    if (typicalGirthText !== "") {
+      typicalGirth = Number(typicalGirthText);
+
+      if (!Number.isFinite(typicalGirth) || typicalGirth < 0) {
+        setError("Typical girth must be a number greater than or equal to 0.");
+        return;
+      }
+    }
+
     const created = await createCatalogueItem("flashing_types", {
       name: name.trim(),
       unit: "m",
       unit_cost: null,
+      typical_girth: typicalGirth,
       sort_order: flashings.length,
       active: true,
     });
@@ -799,12 +756,63 @@ export default function CataloguePage() {
     await load();
   }
 
-  async function addFlashingBand() {
-    if (!selectedFlashingType) {
-      setError("Select a flashing type.");
-      return;
+  async function updateFlashingTypeTypicalGirth(
+    flashingTypeId: string,
+    rawValue: string,
+  ): Promise<boolean> {
+    const trimmed = rawValue.trim();
+
+    if (trimmed === "") {
+      const updated = await updateCatalogueItem(
+        "flashing_types",
+        flashingTypeId,
+        {
+          typical_girth: null,
+        },
+      );
+
+      if (!updated) return false;
+
+      setFlashings((current) =>
+        current.map((flashing) =>
+          flashing.id === flashingTypeId
+            ? { ...flashing, typicalGirth: null }
+            : flashing,
+        ),
+      );
+
+      return true;
     }
 
+    const typicalGirth = Number(trimmed);
+
+    if (!Number.isFinite(typicalGirth) || typicalGirth < 0) {
+      setError("Typical girth must be a number greater than or equal to 0.");
+      return false;
+    }
+
+    const updated = await updateCatalogueItem(
+      "flashing_types",
+      flashingTypeId,
+      {
+        typical_girth: typicalGirth,
+      },
+    );
+
+    if (!updated) return false;
+
+    setFlashings((current) =>
+      current.map((flashing) =>
+        flashing.id === flashingTypeId
+          ? { ...flashing, typicalGirth }
+          : flashing,
+      ),
+    );
+
+    return true;
+  }
+
+  async function addFlashingBand() {
     if (flashingMinGirth.trim() === "" || flashingMaxGirth.trim() === "") {
       setError("Enter both minimum and maximum girth.");
       return;
@@ -814,8 +822,8 @@ export default function CataloguePage() {
     const maxGirth = Number(flashingMaxGirth);
 
     if (
-      Number.isNaN(minGirth) ||
-      Number.isNaN(maxGirth) ||
+      !Number.isFinite(minGirth) ||
+      !Number.isFinite(maxGirth) ||
       minGirth < 0 ||
       maxGirth < 0
     ) {
@@ -830,18 +838,15 @@ export default function CataloguePage() {
 
     const existing = flashingBands.find(
       (band) =>
-        band.minGirth === minGirth &&
-        band.maxGirth === maxGirth &&
-        band.flashingTypeId === selectedFlashingType,
+        band.minGirth === minGirth && band.maxGirth === maxGirth,
     );
 
     if (existing) {
-      setError("That girth band already exists for this flashing type.");
+      setError("That girth band already exists.");
       return;
     }
 
     const created = await createCatalogueItem("flashing_girth_bands", {
-      flashing_type_id: selectedFlashingType,
       min_girth: minGirth,
       max_girth: maxGirth,
       active: true,
@@ -853,54 +858,84 @@ export default function CataloguePage() {
     setFlashingMinGirth("");
     setFlashingMaxGirth("");
 
-    await loadFlashingBandsFor(selectedFlashingType);
+    const refreshed = await loadFlashingBands();
+    setFlashingBands(refreshed);
   }
 
-  async function addFlashingPrice() {
-    if (!selectedFlashingBand) {
-      setError("Select a girth band.");
-      return;
-    }
-
-    if (!flashingPriceMaterial) {
-      setError("Select a material.");
-      return;
-    }
-
-    if (flashingPriceCost.trim() === "") {
-      setError("Enter a price per metre.");
-      return;
-    }
-
-    const cost = Number(flashingPriceCost);
-
-    if (Number.isNaN(cost) || cost < 0) {
-      setError("Price must be a number greater than or equal to 0.");
-      return;
-    }
-
+  async function saveFlashingPrice(
+    bandId: string,
+    materialId: string,
+    rawValue: string,
+  ): Promise<boolean> {
     const existing = flashingPrices.find(
       (price) =>
-        price.flashingGirthBandId === selectedFlashingBand &&
-        price.materialId === flashingPriceMaterial,
+        price.flashingGirthBandId === bandId &&
+        price.materialId === materialId,
     );
 
+    const trimmed = rawValue.trim();
+
+    if (trimmed === "") {
+      if (!existing) {
+        return true;
+      }
+
+      const deleted = await deleteCatalogueItem(
+        "flashing_prices",
+        existing.id,
+      );
+
+      if (!deleted) return false;
+
+      setFlashingPrices((current) =>
+        current.filter((price) => price.id !== existing.id),
+      );
+
+      return true;
+    }
+
+    const cost = Number(trimmed);
+
+    if (!Number.isFinite(cost) || cost < 0) {
+      setError("Price must be a number greater than or equal to 0.");
+      return false;
+    }
+
     if (existing) {
-      setError("A price already exists for this material and girth band.");
-      return;
+      const updated = await updateCatalogueItem(
+        "flashing_prices",
+        existing.id,
+        {
+          unit_cost: cost,
+        },
+      );
+
+      if (!updated) return false;
+
+      setFlashingPrices((current) =>
+        current.map((price) =>
+          price.id === existing.id
+            ? { ...price, unitCost: cost }
+            : price,
+        ),
+      );
+
+      return true;
     }
 
     const created = await createCatalogueItem("flashing_prices", {
-      flashing_girth_band_id: selectedFlashingBand,
-      material_id: flashingPriceMaterial,
+      flashing_girth_band_id: bandId,
+      material_id: materialId,
       unit_cost: cost,
       active: true,
     });
 
-    if (!created) return;
+    if (!created) return false;
 
-    setFlashingPriceCost("");
-    await loadFlashingPricesFor(selectedFlashingBand);
+    const refreshed = await loadFlashingPrices();
+    setFlashingPrices(refreshed);
+
+    return true;
   }
 
   async function addPrice() {
@@ -1405,7 +1440,7 @@ export default function CataloguePage() {
                       }}
                       options={[
                         ["", "Select profile"],
-                        ...pricingProfiles.map(
+                        ...profiles.map(
                           (profile) =>
                             [profile.id, profile.name] as [string, string],
                         ),
@@ -1542,21 +1577,16 @@ export default function CataloguePage() {
                 flashingBands={flashingBands}
                 flashingPrices={flashingPrices}
                 materials={materials}
-                selectedFlashingType={selectedFlashingType}
-                setSelectedFlashingType={setSelectedFlashingType}
                 flashingMinGirth={flashingMinGirth}
                 setFlashingMinGirth={setFlashingMinGirth}
                 flashingMaxGirth={flashingMaxGirth}
                 setFlashingMaxGirth={setFlashingMaxGirth}
-                selectedFlashingBand={selectedFlashingBand}
-                setSelectedFlashingBand={setSelectedFlashingBand}
-                flashingPriceMaterial={flashingPriceMaterial}
-                setFlashingPriceMaterial={setFlashingPriceMaterial}
-                flashingPriceCost={flashingPriceCost}
-                setFlashingPriceCost={setFlashingPriceCost}
                 addFlashingType={addFlashingType}
+                updateFlashingTypeTypicalGirth={
+                  updateFlashingTypeTypicalGirth
+                }
                 addFlashingBand={addFlashingBand}
-                addFlashingPrice={addFlashingPrice}
+                saveFlashingPrice={saveFlashingPrice}
                 deleteItem={deleteItem}
               />
             )}
@@ -1683,55 +1713,117 @@ function FlashingPanel({
   flashingBands,
   flashingPrices,
   materials,
-  selectedFlashingType,
-  setSelectedFlashingType,
   flashingMinGirth,
   setFlashingMinGirth,
   flashingMaxGirth,
   setFlashingMaxGirth,
-  selectedFlashingBand,
-  setSelectedFlashingBand,
-  flashingPriceMaterial,
-  setFlashingPriceMaterial,
-  flashingPriceCost,
-  setFlashingPriceCost,
   addFlashingType,
+  updateFlashingTypeTypicalGirth,
   addFlashingBand,
-  addFlashingPrice,
+  saveFlashingPrice,
   deleteItem,
 }: {
   flashings: FlashingType[];
   flashingBands: FlashingGirthBand[];
   flashingPrices: FlashingPrice[];
   materials: Material[];
-  selectedFlashingType: string;
-  setSelectedFlashingType: (value: string) => void;
   flashingMinGirth: string;
   setFlashingMinGirth: (value: string) => void;
   flashingMaxGirth: string;
   setFlashingMaxGirth: (value: string) => void;
-  selectedFlashingBand: string;
-  setSelectedFlashingBand: (value: string) => void;
-  flashingPriceMaterial: string;
-  setFlashingPriceMaterial: (value: string) => void;
-  flashingPriceCost: string;
-  setFlashingPriceCost: (value: string) => void;
   addFlashingType: () => void;
+  updateFlashingTypeTypicalGirth: (
+    flashingTypeId: string,
+    rawValue: string,
+  ) => Promise<boolean>;
   addFlashingBand: () => void;
-  addFlashingPrice: () => void;
+  saveFlashingPrice: (
+    bandId: string,
+    materialId: string,
+    rawValue: string,
+  ) => Promise<boolean>;
   deleteItem: (table: CatalogueTable, id: string) => Promise<boolean>;
 }) {
-  const selectedType = flashings.find(
-    (flashing) => flashing.id === selectedFlashingType,
-  );
+  const [draftPrices, setDraftPrices] = useState<Record<string, string>>({});
 
-  const selectedBand = flashingBands.find(
-    (band) => band.id === selectedFlashingBand,
-  );
+  function priceKey(bandId: string, materialId: string) {
+    return `${bandId}:${materialId}`;
+  }
+
+  function getPriceValue(bandId: string, materialId: string) {
+    const key = priceKey(bandId, materialId);
+
+    if (Object.prototype.hasOwnProperty.call(draftPrices, key)) {
+      return draftPrices[key];
+    }
+
+    const price = flashingPrices.find(
+      (item) =>
+        item.flashingGirthBandId === bandId &&
+        item.materialId === materialId,
+    );
+
+    return price == null ? "" : String(price.unitCost);
+  }
+
+  function setDraftPrice(
+    bandId: string,
+    materialId: string,
+    value: string,
+  ) {
+    setDraftPrices((current) => ({
+      ...current,
+      [priceKey(bandId, materialId)]: value,
+    }));
+  }
+
+  async function handlePriceBlur(
+    bandId: string,
+    materialId: string,
+  ) {
+    const key = priceKey(bandId, materialId);
+    const value = getPriceValue(bandId, materialId);
+
+    const saved = await saveFlashingPrice(
+      bandId,
+      materialId,
+      value,
+    );
+
+    if (saved) {
+      setDraftPrices((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+    }
+  }
+
+  function handlePriceKeyDown(
+    event: React.KeyboardEvent<HTMLInputElement>,
+  ) {
+    if (event.key === "Enter") {
+      event.currentTarget.blur();
+    }
+  }
+
+  const sortedBands = flashingBands
+    .slice()
+    .sort((a, b) => {
+      if (a.minGirth !== b.minGirth) {
+        return a.minGirth - b.minGirth;
+      }
+
+      if (a.maxGirth !== b.maxGirth) {
+        return a.maxGirth - b.maxGirth;
+      }
+
+      return a.sortOrder - b.sortOrder;
+    });
 
   return (
     <div className="space-y-5">
-      <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
+      <div className="grid gap-5 lg:grid-cols-[1fr_1fr]">
         <Panel
           title="Flashing types"
           action={
@@ -1751,17 +1843,9 @@ function FlashingPanel({
               {flashings.map((flashing) => (
                 <div
                   key={flashing.id}
-                  className="flex items-center justify-between gap-3 py-3"
+                  className="grid gap-4 py-3 sm:grid-cols-[1fr_150px_70px]"
                 >
-                  <button
-                    type="button"
-                    onClick={() => setSelectedFlashingType(flashing.id)}
-                    className={
-                      selectedFlashingType === flashing.id
-                        ? "flex-1 rounded-md bg-black/[0.045] px-3 py-2 text-left"
-                        : "flex-1 rounded-md px-3 py-2 text-left hover:bg-black/[0.025]"
-                    }
-                  >
+                  <div>
                     <div className="text-[11px] text-black/65">
                       {flashing.name}
                     </div>
@@ -1769,12 +1853,107 @@ function FlashingPanel({
                     <div className="mt-1 text-[9px] uppercase tracking-[0.12em] text-black/25">
                       charged by metre
                     </div>
-                  </button>
+                  </div>
+
+                  <div>
+                    <label className="block">
+                      <span className="text-[8px] uppercase tracking-[0.12em] text-black/25">
+                        Typical girth
+                      </span>
+
+                      <input
+                        defaultValue={
+                          flashing.typicalGirth == null
+                            ? ""
+                            : String(flashing.typicalGirth)
+                        }
+                        onBlur={(event) =>
+                          void updateFlashingTypeTypicalGirth(
+                            flashing.id,
+                            event.target.value,
+                          )
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.currentTarget.blur();
+                          }
+                        }}
+                        placeholder="e.g. 425"
+                        className={inputClass + " mt-1"}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="flex items-end justify-end">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void deleteItem("flashing_types", flashing.id)
+                      }
+                      className="pb-2 text-[10px] text-black/20 hover:text-red-500"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+
+        <Panel title="Girth bands">
+          <div className="mb-5 grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
+            <Input
+              label="Minimum girth"
+              value={flashingMinGirth}
+              onChange={setFlashingMinGirth}
+              placeholder="e.g. 401"
+            />
+
+            <Input
+              label="Maximum girth"
+              value={flashingMaxGirth}
+              onChange={setFlashingMaxGirth}
+              placeholder="e.g. 450"
+            />
+
+            <div className="flex items-end">
+              <button
+                type="button"
+                onClick={addFlashingBand}
+                className="w-full rounded-md bg-[#242422] px-4 py-2 text-[10px] text-white sm:w-auto"
+              >
+                Add girth band
+              </button>
+            </div>
+          </div>
+
+          {sortedBands.length === 0 ? (
+            <Empty text="No girth bands configured." />
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-2">
+              {sortedBands.map((band) => (
+                <div
+                  key={band.id}
+                  className="flex items-center justify-between gap-4 rounded-md border border-black/[0.06] bg-white px-4 py-3"
+                >
+                  <div>
+                    <div className="font-mono text-[11px] text-black/60">
+                      {band.minGirth}–{band.maxGirth}G
+                    </div>
+
+                    <div className="mt-1 text-[9px] text-black/25">
+                      Global girth band
+                    </div>
+                  </div>
 
                   <button
                     type="button"
                     onClick={() =>
-                      void deleteItem("flashing_types", flashing.id)
+                      void deleteItem(
+                        "flashing_girth_bands",
+                        band.id,
+                      )
                     }
                     className="text-[10px] text-black/20 hover:text-red-500"
                   >
@@ -1785,197 +1964,87 @@ function FlashingPanel({
             </div>
           )}
         </Panel>
-
-        <Panel
-          title={
-            selectedType
-              ? `${selectedType.name} — girth bands`
-              : "Girth bands"
-          }
-        >
-          {!selectedFlashingType ? (
-            <Empty text="Select a flashing type." />
-          ) : (
-            <>
-              <div className="mb-5 grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
-                <Input
-                  label="Minimum girth"
-                  value={flashingMinGirth}
-                  onChange={setFlashingMinGirth}
-                  placeholder="e.g. 401"
-                />
-
-                <Input
-                  label="Maximum girth"
-                  value={flashingMaxGirth}
-                  onChange={setFlashingMaxGirth}
-                  placeholder="e.g. 450"
-                />
-
-                <div className="flex items-end">
-                  <button
-                    type="button"
-                    onClick={addFlashingBand}
-                    className="w-full rounded-md bg-[#242422] px-4 py-2 text-[10px] text-white sm:w-auto"
-                  >
-                    Add girth band
-                  </button>
-                </div>
-              </div>
-
-              {flashingBands.length === 0 ? (
-                <Empty text="No girth bands configured for this flashing type." />
-              ) : (
-                <div className="space-y-2">
-                  {flashingBands
-                    .slice()
-                    .sort((a, b) => {
-                      if (a.minGirth !== b.minGirth) {
-                        return a.minGirth - b.minGirth;
-                      }
-
-                      return a.maxGirth - b.maxGirth;
-                    })
-                    .map((band) => (
-                      <div
-                        key={band.id}
-                        className={
-                          selectedFlashingBand === band.id
-                            ? "flex items-center justify-between gap-4 rounded-md border border-black/[0.12] bg-white px-4 py-3"
-                            : "flex items-center justify-between gap-4 rounded-md border border-black/[0.06] bg-white px-4 py-3"
-                        }
-                      >
-                        <button
-                          type="button"
-                          onClick={() => setSelectedFlashingBand(band.id)}
-                          className="flex-1 text-left"
-                        >
-                          <div className="font-mono text-[11px] text-black/60">
-                            {band.minGirth}–{band.maxGirth}G
-                          </div>
-
-                          <div className="mt-1 text-[9px] text-black/25">
-                            Actual girth within this range uses this band.
-                          </div>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void deleteItem(
-                              "flashing_girth_bands",
-                              band.id,
-                            )
-                          }
-                          className="text-[10px] text-black/20 hover:text-red-500"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    ))}
-                </div>
-              )}
-            </>
-          )}
-        </Panel>
       </div>
 
-      <Panel
-        title={
-          selectedBand
-            ? `${selectedBand.minGirth}–${selectedBand.maxGirth}G — material pricing`
-            : "Material pricing"
-        }
-      >
-        {!selectedFlashingBand ? (
-          <Empty text="Select a girth band." />
+      <Panel title="Flashing girth pricing">
+        {materials.length === 0 ? (
+          <Empty text="Add materials before entering flashing pricing." />
+        ) : sortedBands.length === 0 ? (
+          <Empty text="Add girth bands before entering flashing pricing." />
         ) : (
-          <>
-            <div className="grid gap-4 md:grid-cols-[1fr_220px_auto]">
-              <Select
-                label="Material"
-                value={flashingPriceMaterial}
-                onChange={setFlashingPriceMaterial}
-                options={[
-                  ["", "Select material"],
-                  ...materials.map(
-                    (material) =>
-                      [material.id, material.name] as [string, string],
-                  ),
-                ]}
-              />
+          <div className="overflow-x-auto">
+            <table className="min-w-[720px] w-full border-collapse">
+              <thead>
+                <tr className="border-b border-black/[0.08]">
+                  <th className="w-[150px] px-3 py-3 text-left text-[9px] font-medium uppercase tracking-[0.12em] text-black/30">
+                    Girth band
+                  </th>
 
-              <Input
-                label="Price / m"
-                value={flashingPriceCost}
-                onChange={setFlashingPriceCost}
-                placeholder="e.g. 12.50"
-              />
+                  {materials.map((material) => (
+                    <th
+                      key={material.id}
+                      className="min-w-[130px] px-3 py-3 text-left text-[9px] font-medium uppercase tracking-[0.12em] text-black/30"
+                    >
+                      {material.name}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
 
-              <div className="flex items-end">
-                <button
-                  type="button"
-                  onClick={addFlashingPrice}
-                  className="w-full rounded-md bg-[#242422] px-4 py-2 text-[10px] text-white md:w-auto"
-                >
-                  Add price
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-5">
-              {flashingPrices.length === 0 ? (
-                <Empty text="No material prices entered for this girth band." />
-              ) : (
-                <div className="divide-y divide-black/[0.06]">
-                  {flashingPrices.map((price) => {
-                    const material = materials.find(
-                      (item) => item.id === price.materialId,
-                    );
-
-                    return (
-                      <div
-                        key={price.id}
-                        className="grid grid-cols-[1fr_120px_80px] items-center gap-4 py-3"
-                      >
-                        <div>
-                          <div className="text-[11px] text-black/60">
-                            {material?.name || "Unknown material"}
-                          </div>
-
-                          <div className="mt-1 text-[9px] text-black/25">
-                            {selectedBand
-                              ? `${selectedBand.minGirth}–${selectedBand.maxGirth}G`
-                              : "Girth band"}
-                          </div>
-                        </div>
-
-                        <div className="text-right font-mono text-[11px] text-black/55">
-                          {new Intl.NumberFormat("en-NZ", {
-                            style: "currency",
-                            currency: "NZD",
-                          }).format(price.unitCost)}
-                          <span className="ml-1 text-[9px] text-black/25">
-                            / m
-                          </span>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void deleteItem("flashing_prices", price.id)
-                          }
-                          className="text-right text-[10px] text-black/20 hover:text-red-500"
-                        >
-                          Delete
-                        </button>
+              <tbody>
+                {sortedBands.map((band) => (
+                  <tr
+                    key={band.id}
+                    className="border-b border-black/[0.05] last:border-b-0"
+                  >
+                    <td className="px-3 py-3 align-middle">
+                      <div className="font-mono text-[11px] text-black/60">
+                        {band.minGirth}–{band.maxGirth}G
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </>
+
+                      <div className="mt-1 text-[8px] text-black/25">
+                        $ / m
+                      </div>
+                    </td>
+
+                    {materials.map((material) => (
+                      <td
+                        key={material.id}
+                        className="px-3 py-2 align-middle"
+                      >
+                        <input
+                          inputMode="decimal"
+                          value={getPriceValue(band.id, material.id)}
+                          onChange={(event) =>
+                            setDraftPrice(
+                              band.id,
+                              material.id,
+                              event.target.value,
+                            )
+                          }
+                          onBlur={() =>
+                            void handlePriceBlur(
+                              band.id,
+                              material.id,
+                            )
+                          }
+                          onKeyDown={handlePriceKeyDown}
+                          placeholder="—"
+                          aria-label={`${band.minGirth}–${band.maxGirth}G ${material.name} price per metre`}
+                          className="w-full rounded-md border border-black/[0.08] bg-white px-3 py-2 text-right font-mono text-[11px] text-black/60 outline-none focus:border-black/25"
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <p className="mt-4 text-[9px] leading-4 text-black/30">
+              Enter a price per metre and leave the cell to save it. Clear an
+              existing cell and leave it to remove that price.
+            </p>
+          </div>
         )}
       </Panel>
     </div>
@@ -2110,4 +2179,3 @@ function SimplePanel({
     </Panel>
   );
 }
-

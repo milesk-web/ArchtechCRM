@@ -17,61 +17,79 @@ const TABLES = new Set([
 ]);
 
 async function authorised(request: Request) {
-  // 1. Check Microsoft OAuth session (used by OneDrive / Microsoft integration)
   const session = await getSession();
+
   if (session?.user) {
     return true;
   }
 
-  // 2. Validate Supabase Auth token if present in Authorization header
   const authHeader = request.headers.get("authorization");
+
   if (authHeader && authHeader.startsWith("Bearer ")) {
     const token = authHeader.substring(7).trim();
+
     if (token) {
       const { data, error } = await supabaseAdmin.auth.getUser(token);
+
       if (!error && data?.user) {
         return true;
       }
     }
   }
 
-  // 3. Check for active Supabase Auth session via cookies
   const cookieHeader = request.headers.get("cookie");
+
   if (cookieHeader) {
     const tokens: string[] = [];
 
-    // Match standard Supabase auth cookie pattern sb-<project-ref>-auth-token or sb-access-token / sb-provider-token
-    const matches = cookieHeader.matchAll(/sb-[a-zA-Z0-9_-]+-auth-token(?:[.-]\d+)?=([^;]+)/g);
+    const matches = cookieHeader.matchAll(
+      /sb-[a-zA-Z0-9_-]+-auth-token(?:[.-]\d+)?=([^;]+)/g,
+    );
+
     for (const match of matches) {
       try {
         const rawValue = decodeURIComponent(match[1]);
         const parsed = JSON.parse(rawValue);
-        const token = Array.isArray(parsed) ? parsed[0] : parsed?.access_token || parsed;
+        const token = Array.isArray(parsed)
+          ? parsed[0]
+          : parsed?.access_token || parsed;
+
         if (typeof token === "string" && token) {
           tokens.push(token);
         }
       } catch {
-        if (match[1]) tokens.push(match[1]);
+        if (match[1]) {
+          tokens.push(match[1]);
+        }
       }
     }
 
-    // Also check generic supabase cookies
-    const genericMatch = cookieHeader.match(/supabase-auth-token=([^;]+)/);
+    const genericMatch = cookieHeader.match(
+      /supabase-auth-token=([^;]+)/,
+    );
+
     if (genericMatch) {
       try {
         const rawValue = decodeURIComponent(genericMatch[1]);
         const parsed = JSON.parse(rawValue);
-        const token = Array.isArray(parsed) ? parsed[0] : parsed?.access_token || parsed;
+        const token = Array.isArray(parsed)
+          ? parsed[0]
+          : parsed?.access_token || parsed;
+
         if (typeof token === "string" && token) {
           tokens.push(token);
         }
       } catch {
-        if (genericMatch[1]) tokens.push(genericMatch[1]);
+        if (genericMatch[1]) {
+          tokens.push(genericMatch[1]);
+        }
       }
     }
 
     for (const token of tokens) {
-      const { data, error } = await supabaseAdmin.auth.getUser(token);
+      const { data, error } =
+        await supabaseAdmin.auth.getUser(token);
+
       if (!error && data?.user) {
         return true;
       }
@@ -79,6 +97,10 @@ async function authorised(request: Request) {
   }
 
   return false;
+}
+
+function validTable(table: unknown): table is string {
+  return typeof table === "string" && TABLES.has(table);
 }
 
 export async function GET(request: Request) {
@@ -95,7 +117,7 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const table = url.searchParams.get("table");
 
-    if (!table || !TABLES.has(table)) {
+    if (!validTable(table)) {
       return NextResponse.json(
         { error: "Invalid catalogue table." },
         { status: 400 },
@@ -112,13 +134,15 @@ export async function GET(request: Request) {
     } else if (table === "flashing_girth_bands") {
       query = query
         .eq("active", true)
-        .order("flashing_type_id", { ascending: true })
-        .order("sort_order", { ascending: true })
-        .order("min_girth", { ascending: true });
+        .order("min_girth", { ascending: true })
+        .order("max_girth", { ascending: true })
+        .order("sort_order", { ascending: true });
     } else if (table === "flashing_prices") {
       query = query
         .eq("active", true)
-        .order("flashing_girth_band_id", { ascending: true })
+        .order("flashing_girth_band_id", {
+          ascending: true,
+        })
         .order("material_id", { ascending: true });
     } else {
       query = query
@@ -147,7 +171,8 @@ export async function GET(request: Request) {
         query = query.eq("profile_id", profileId);
       }
 
-      const profileOptionId = url.searchParams.get("profile_option_id");
+      const profileOptionId =
+        url.searchParams.get("profile_option_id");
 
       if (profileOptionId) {
         query = query.eq("profile_option_id", profileOptionId);
@@ -160,18 +185,9 @@ export async function GET(request: Request) {
       }
     }
 
-    if (table === "flashing_girth_bands") {
-      const flashingTypeId = url.searchParams.get("flashing_type_id");
-
-      if (flashingTypeId) {
-        query = query.eq("flashing_type_id", flashingTypeId);
-      }
-    }
-
     if (table === "flashing_prices") {
-      const flashingGirthBandId = url.searchParams.get(
-        "flashing_girth_band_id",
-      );
+      const flashingGirthBandId =
+        url.searchParams.get("flashing_girth_band_id");
 
       if (flashingGirthBandId) {
         query = query.eq(
@@ -222,9 +238,16 @@ export async function POST(request: Request) {
     const body = await request.json();
     const table = body.table;
 
-    if (typeof table !== "string" || !TABLES.has(table)) {
+    if (!validTable(table)) {
       return NextResponse.json(
         { error: "Invalid catalogue table." },
+        { status: 400 },
+      );
+    }
+
+    if (!body.data || typeof body.data !== "object") {
+      return NextResponse.json(
+        { error: "Catalogue data is required." },
         { status: 400 },
       );
     }
@@ -256,6 +279,70 @@ export async function POST(request: Request) {
   }
 }
 
+export async function PUT(request: Request) {
+  const isAllowed = await authorised(request);
+
+  if (!isAllowed) {
+    return NextResponse.json(
+      { error: "Authentication required." },
+      { status: 401 },
+    );
+  }
+
+  try {
+    const body = await request.json();
+    const table = body.table;
+    const id = body.id;
+
+    if (!validTable(table)) {
+      return NextResponse.json(
+        { error: "Invalid catalogue table." },
+        { status: 400 },
+      );
+    }
+
+    if (typeof id !== "string" || !id) {
+      return NextResponse.json(
+        { error: "Catalogue item ID is required." },
+        { status: 400 },
+      );
+    }
+
+    if (!body.data || typeof body.data !== "object") {
+      return NextResponse.json(
+        { error: "Catalogue data is required." },
+        { status: 400 },
+      );
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from(table)
+      .update(body.data)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: 400 },
+      );
+    }
+
+    return NextResponse.json({ data });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to update catalogue item.",
+      },
+      { status: 500 },
+    );
+  }
+}
+
 export async function DELETE(request: Request) {
   const isAllowed = await authorised(request);
 
@@ -272,7 +359,7 @@ export async function DELETE(request: Request) {
     const table = body.table;
     const id = body.id;
 
-    if (typeof table !== "string" || !TABLES.has(table)) {
+    if (!validTable(table)) {
       return NextResponse.json(
         { error: "Invalid catalogue table." },
         { status: 400 },
