@@ -1,0 +1,12 @@
+[
+  {"name": "Roof material markup", "section": "Roofing", "rule_type": "material_markup", "value": 0.15},
+  {"name": "Roof labour markup", "section": "Roofing", "rule_type": "labour_markup", "value": 0.15},
+  {"name": "Wall material markup", "section": "Wall Cladding", "rule_type": "material_markup", "value": 0.30},
+  {"name": "Wall labour markup", "section": "Wall Cladding", "rule_type": "labour_markup", "value": 0.30},
+  {"name": "Small job fee", "section": null, "rule_type": "small_job_fee", "value": 350},
+  {"name": "Measure fee", "section": null, "rule_type": "measure_fee", "value": 1500},
+  {"name": "Travel per hour", "section": null, "rule_type": "travel_rate_per_hour", "value": 65},
+  {"name": "Distance per km", "section": null, "rule_type": "distance_rate_per_km", "value": 1.50},
+  {"name": "Meal allowance", "section": null, "rule_type": "meal_allowance", "value": 100},
+  {"name": "Accommodation per week per person", "section": null, "rule_type": "accommodation_per_week", "value": 1250}
+]
