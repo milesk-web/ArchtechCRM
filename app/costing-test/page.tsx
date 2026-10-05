@@ -5,6 +5,17 @@ import Link from "next/link";
 
 type Option = { id: string; name?: string; value?: string; section?: string };
 
+async function readJson(res: Response): Promise<any> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(
+      text.slice(0, 300) || `Server returned non-JSON (status ${res.status})`,
+    );
+  }
+}
+
 export default function CostingTestPage() {
   const [profiles, setProfiles] = useState<Option[]>([]);
   const [options, setOptions] = useState<Option[]>([]);
@@ -34,8 +45,8 @@ export default function CostingTestPage() {
         fetch("/api/catalogue?table=profiles"),
         fetch("/api/catalogue?table=materials"),
       ]);
-      const pJson = await pRes.json();
-      const mJson = await mRes.json();
+      const pJson = await readJson(pRes);
+      const mJson = await readJson(mRes);
       if (!pRes.ok) throw new Error(pJson.error || "Could not load profiles");
       if (!mRes.ok) throw new Error(mJson.error || "Could not load materials");
       setProfiles(pJson.data ?? []);
@@ -56,7 +67,7 @@ export default function CostingTestPage() {
       const res = await fetch(
         `/api/catalogue?table=profile_options&profile_id=${id}`,
       );
-      const json = await res.json();
+      const json = await readJson(res);
       if (!res.ok) throw new Error(json.error || "Could not load options");
       setOptions(json.data ?? []);
     } catch (e) {
@@ -70,7 +81,7 @@ export default function CostingTestPage() {
     setError("");
     try {
       const res = await fetch("/api/costing/seed", { method: "POST" });
-      const json = await res.json();
+      const json = await readJson(res);
       if (!res.ok) throw new Error(json.error || "Seed failed");
       setSeedMsg(json.message || "Seed complete");
       await loadLists();
@@ -109,7 +120,7 @@ export default function CostingTestPage() {
           },
         }),
       });
-      const json = await res.json();
+      const json = await readJson(res);
       if (!res.ok) throw new Error(json.error || "Calculate failed");
       setResult(json);
     } catch (e) {
@@ -266,7 +277,7 @@ export default function CostingTestPage() {
         </section>
 
         {error && (
-          <div className="mb-6 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          <div className="mb-6 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 whitespace-pre-wrap">
             {error}
           </div>
         )}
