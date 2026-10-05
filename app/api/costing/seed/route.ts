@@ -5,11 +5,55 @@
 
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
-import profileRates from "@/seed/profile-rates.json";
-import pricingRules from "@/seed/pricing-rules.json";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+
+// Inline rates so we never depend on JSON module resolution at runtime
+const PROFILE_RATES: {
+  profile: string;
+  option: string;
+  material: string;
+  unit: string;
+  unit_cost: number;
+}[] = [
+  { profile: "Super Seam", option: "250", material: "KiwiColour Vitor+", unit: "m2", unit_cost: 13.3322 },
+  { profile: "Super Seam", option: "250", material: "KiwiColour Vitor ZX", unit: "m2", unit_cost: 15.59 },
+  { profile: "Super Seam", option: "250", material: "KiwiColour LUX", unit: "m2", unit_cost: 17.869 },
+  { profile: "Super Seam", option: "450", material: "KiwiColour Vitor+", unit: "m2", unit_cost: 17.869 },
+  { profile: "Super Seam", option: "450", material: "KiwiColour Vitor ZX", unit: "m2", unit_cost: 20.7045 },
+  { profile: "Super Seam", option: "450", material: "KiwiColour LUX", unit: "m2", unit_cost: 23.54 },
+  { profile: "Standing Seam", option: "300", material: "KiwiColour Vitor+", unit: "m2", unit_cost: 13.3322 },
+  { profile: "Standing Seam", option: "300", material: "KiwiColour Vitor ZX", unit: "m2", unit_cost: 15.59 },
+  { profile: "Standing Seam", option: "500", material: "KiwiColour Vitor+", unit: "m2", unit_cost: 17.869 },
+  { profile: "Standing Seam", option: "500", material: "KiwiColour Vitor ZX", unit: "m2", unit_cost: 20.7045 },
+  { profile: "Interlocking Panels", option: "192", material: "KiwiColour Vitor+", unit: "m2", unit_cost: 9.9296 },
+  { profile: "Interlocking Panels", option: "193-295", material: "KiwiColour Vitor+", unit: "m2", unit_cost: 13.3322 },
+  { profile: "Corrugated", option: "0.4", material: "KiwiColour Vitor+", unit: "m2", unit_cost: 14.7446 },
+  { profile: "Corrugated", option: "0.4", material: "Duralume", unit: "m2", unit_cost: 10.35 },
+  { profile: "Corrugated", option: "0.55", material: "KiwiColour Vitor+", unit: "m2", unit_cost: 17.89 },
+  { profile: "Corrugated", option: "0.55", material: "Duralume", unit: "m2", unit_cost: 14.01 },
+  { profile: "Corrugated", option: "0.55", material: "KiwiColour LUX", unit: "m2", unit_cost: 29.15 },
+  { profile: "TRS5", option: "0.4", material: "KiwiColour Vitor+", unit: "m2", unit_cost: 14.7446 },
+  { profile: "TRS5", option: "0.4", material: "Duralume", unit: "m2", unit_cost: 10.35 },
+  { profile: "TRS5", option: "0.55", material: "KiwiColour Vitor+", unit: "m2", unit_cost: 17.89 },
+  { profile: "TRS5", option: "0.55", material: "KiwiColour Vitor ZX", unit: "m2", unit_cost: 21.64 },
+  { profile: "TRS5", option: "0.55", material: "Duralume", unit: "m2", unit_cost: 14.01 },
+  { profile: "TRS5", option: "0.55", material: "KiwiColour LUX", unit: "m2", unit_cost: 29.1468 },
+  { profile: "TRS6", option: "0.55", material: "KiwiColour Vitor+", unit: "m2", unit_cost: 17.89 },
+  { profile: "TRS7", option: "0.55", material: "KiwiColour Vitor+", unit: "m2", unit_cost: 23.5935 },
+  { profile: "TRS9", option: "0.55", material: "KiwiColour Vitor+", unit: "m2", unit_cost: 22.12 },
+];
+
+const PRICING_RULES = [
+  { name: "Roof material markup", section: "Roofing", rule_type: "material_markup", value: 0.15 },
+  { name: "Roof labour markup", section: "Roofing", rule_type: "labour_markup", value: 0.15 },
+  { name: "Wall material markup", section: "Wall Cladding", rule_type: "material_markup", value: 0.3 },
+  { name: "Wall labour markup", section: "Wall Cladding", rule_type: "labour_markup", value: 0.3 },
+  { name: "Small job fee", section: null as string | null, rule_type: "small_job_fee", value: 350 },
+  { name: "Measure fee", section: null as string | null, rule_type: "measure_fee", value: 1500 },
+  { name: "Distance per km", section: null as string | null, rule_type: "distance_rate_per_km", value: 1.5 },
+];
 
 const MATERIALS = [
   "KiwiColour Vitor+",
@@ -19,10 +63,6 @@ const MATERIALS = [
   "Duralume",
   "Euramax",
   "Copper",
-  "ColorCote",
-  "Colorsteel",
-  "Aluminium",
-  "Corten",
 ];
 
 const ROOF_PROFILES: { name: string; measurementType: "gauge" | "width"; options: string[] }[] = [
@@ -39,25 +79,14 @@ const ROOF_PROFILES: { name: string; measurementType: "gauge" | "width"; options
 const WALL_PROFILES = ROOF_PROFILES.filter((p) => p.name !== "TRS7");
 
 const FLASHING_TYPES = [
-  { name: "Apron", typicalGirthMm: 425 },
-  { name: "Apron Head", typicalGirthMm: 375 },
-  { name: "Barge", typicalGirthMm: 425 },
-  { name: "Barge Head", typicalGirthMm: 375 },
-  { name: "Drip", typicalGirthMm: 225 },
-  { name: "Parapet Cap", typicalGirthMm: 625 },
-  { name: "Ridge", typicalGirthMm: 575 },
-  { name: "Ridge Hip", typicalGirthMm: 575 },
-  { name: "Roll Top Ridge", typicalGirthMm: 200 },
-  { name: "Roll Top Hip", typicalGirthMm: 200 },
-  { name: "Valley", typicalGirthMm: 525 },
-  { name: "Soaker", typicalGirthMm: 175 },
+  "Apron", "Apron Head", "Barge", "Barge Head", "Drip", "Parapet Cap",
+  "Ridge", "Ridge Hip", "Roll Top Ridge", "Roll Top Hip", "Valley", "Soaker",
 ];
 
 const GIRTH_BANDS = [
   [1, 50], [51, 100], [101, 150], [151, 200], [201, 250], [251, 300],
   [301, 350], [351, 400], [401, 450], [451, 500], [501, 550], [551, 600],
   [601, 650], [651, 700], [701, 750], [751, 800], [801, 850], [851, 900],
-  [901, 950], [951, 1000], [1001, 1050], [1051, 1100], [1101, 1150], [1151, 1200],
 ];
 
 const LABOUR_RATES = [
@@ -74,8 +103,9 @@ const LABOUR_FACTORS = [
 ];
 
 async function ensureMaterial(name: string, sort: number): Promise<string> {
-  const { data: existing } = await supabaseAdmin
+  const { data: existing, error: selErr } = await supabaseAdmin
     .from("materials").select("id").eq("name", name).maybeSingle();
+  if (selErr) throw new Error(`materials table: ${selErr.message}`);
   if (existing) return existing.id;
   const { data, error } = await supabaseAdmin
     .from("materials")
@@ -88,8 +118,9 @@ async function ensureMaterial(name: string, sort: number): Promise<string> {
 async function ensureProfile(
   name: string, section: string, measurementType: string, sort: number,
 ): Promise<string> {
-  const { data: existing } = await supabaseAdmin
+  const { data: existing, error: selErr } = await supabaseAdmin
     .from("profiles").select("id").eq("name", name).eq("section", section).maybeSingle();
+  if (selErr) throw new Error(`profiles table: ${selErr.message}`);
   if (existing) return existing.id;
   const { data, error } = await supabaseAdmin
     .from("profiles")
@@ -114,6 +145,20 @@ async function ensureOption(profileId: string, value: string, sort: number): Pro
 
 export async function POST() {
   try {
+    // Fail fast with a clear message if env is missing
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
+      return NextResponse.json(
+        { error: "Missing NEXT_PUBLIC_SUPABASE_URL on the server." },
+        { status: 500 },
+      );
+    }
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      return NextResponse.json(
+        { error: "Missing SUPABASE_SERVICE_ROLE_KEY on the server (Vercel env)." },
+        { status: 500 },
+      );
+    }
+
     const summary: string[] = [];
 
     const materialIds = new Map<string, string>();
@@ -137,8 +182,10 @@ export async function POST() {
     }
     summary.push(`${profileIds.size} profiles`);
 
+    // material_rates – may not exist if migration not run
     let rateCount = 0;
-    for (const row of profileRates as any[]) {
+    let rateErrors = 0;
+    for (const row of PROFILE_RATES) {
       const profileId =
         profileIds.get(`Roofing::${row.profile}`) ??
         profileIds.get(`Wall Cladding::${row.profile}`);
@@ -150,10 +197,21 @@ export async function POST() {
         .eq("profile_id", profileId).eq("value", row.option).maybeSingle();
       if (!option) continue;
 
-      const { data: existing } = await supabaseAdmin
+      const { data: existing, error: existErr } = await supabaseAdmin
         .from("material_rates").select("id")
         .eq("material_id", materialId).eq("profile_id", profileId)
         .eq("profile_option_id", option.id).is("colour_id", null).maybeSingle();
+
+      if (existErr) {
+        return NextResponse.json(
+          {
+            error:
+              `material_rates table error: ${existErr.message}. ` +
+              "Did you run the costing migration (20261006_costing_engine.sql) in Supabase?",
+          },
+          { status: 500 },
+        );
+      }
       if (existing) continue;
 
       const { error } = await supabaseAdmin.from("material_rates").insert({
@@ -161,22 +219,23 @@ export async function POST() {
         profile_id: profileId,
         profile_option_id: option.id,
         colour_id: null,
-        unit: row.unit ?? "m2",
+        unit: row.unit,
         unit_cost: row.unit_cost,
         active: true,
       });
-      if (!error) rateCount++;
+      if (error) rateErrors++;
+      else rateCount++;
     }
-    summary.push(`${rateCount} new rates`);
+    summary.push(`${rateCount} rates (${rateErrors} skipped)`);
 
+    // Flashing types (no typical_girth_mm required)
     let ftCount = 0;
-    for (const [i, f] of FLASHING_TYPES.entries()) {
+    for (const [i, name] of FLASHING_TYPES.entries()) {
       const { data: existing } = await supabaseAdmin
-        .from("flashing_types").select("id").eq("name", f.name).maybeSingle();
+        .from("flashing_types").select("id").eq("name", name).maybeSingle();
       if (existing) continue;
       const { error } = await supabaseAdmin.from("flashing_types").insert({
-        name: f.name,
-        typical_girth_mm: f.typicalGirthMm,
+        name,
         unit: "lm",
         unit_cost: null,
         active: true,
@@ -184,25 +243,46 @@ export async function POST() {
       });
       if (!error) ftCount++;
     }
-    summary.push(`${ftCount} flashing types`);
+    summary.push(`${ftCount} flashings`);
 
+    // Girth bands
     let bandCount = 0;
     for (const [i, [min, max]] of GIRTH_BANDS.entries()) {
-      const { data: existing } = await supabaseAdmin
+      const { data: existing, error: bandSelErr } = await supabaseAdmin
         .from("flashing_girth_bands").select("id")
         .eq("min_girth", min).eq("max_girth", max).maybeSingle();
+      if (bandSelErr) {
+        return NextResponse.json(
+          {
+            error:
+              `flashing_girth_bands: ${bandSelErr.message}. ` +
+              "Run the costing migration in Supabase SQL editor.",
+          },
+          { status: 500 },
+        );
+      }
       if (existing) continue;
       const { error } = await supabaseAdmin.from("flashing_girth_bands").insert({
         min_girth: min, max_girth: max, sort_order: i, active: true,
       });
       if (!error) bandCount++;
     }
-    summary.push(`${bandCount} girth bands`);
+    summary.push(`${bandCount} bands`);
 
+    // Labour rates
     for (const r of LABOUR_RATES) {
-      const { data: existing } = await supabaseAdmin
+      const { data: existing, error: lrErr } = await supabaseAdmin
         .from("labour_rates").select("id")
         .eq("name", r.name).eq("section", r.section).maybeSingle();
+      if (lrErr) {
+        return NextResponse.json(
+          {
+            error:
+              `labour_rates: ${lrErr.message}. Run the costing migration in Supabase.`,
+          },
+          { status: 500 },
+        );
+      }
       if (existing) continue;
       await supabaseAdmin.from("labour_rates").insert({
         name: r.name, section: r.section, unit: r.unit, base_rate: r.baseRate, active: true,
@@ -220,7 +300,7 @@ export async function POST() {
       });
     }
 
-    for (const r of pricingRules as any[]) {
+    for (const r of PRICING_RULES) {
       const { data: existing } = await supabaseAdmin
         .from("pricing_rules").select("id")
         .eq("rule_type", r.rule_type).eq("section", r.section).maybeSingle();
