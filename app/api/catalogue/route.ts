@@ -11,9 +11,15 @@ const TABLES = new Set([
   "flashing_types",
   "flashing_girth_bands",
   "flashing_prices",
+  "flashing_rates",
+  "flashing_surcharges",
   "labour_types",
+  "labour_rates",
+  "labour_factors",
   "accessories",
   "material_prices",
+  "material_rates",
+  "pricing_rules",
 ]);
 
 function parseCookies(cookieHeader: string): Record<string, string> {
@@ -92,14 +98,13 @@ function extractSupabaseTokensFromCookieHeader(cookieHeader: string): string[] {
 }
 
 async function authorised(request: Request) {
-  // 1. Check Microsoft OAuth session (used by OneDrive / Microsoft integration)
   try {
     const session = await getSession(request);
     if (session?.user) {
       return true;
     }
   } catch {
-    // Continue to next check if getSession throws
+    // Continue
   }
 
   const cookieHeader = request.headers.get("cookie");
@@ -127,7 +132,6 @@ async function authorised(request: Request) {
     }
   }
 
-  // 2. Validate Supabase Auth token if present in Authorization header
   const authHeader = request.headers.get("authorization");
   if (authHeader && authHeader.startsWith("Bearer ")) {
     const token = authHeader.substring(7).trim();
@@ -139,7 +143,6 @@ async function authorised(request: Request) {
     }
   }
 
-  // 3. Check for active Supabase Auth session via cookies
   if (cookieHeader) {
     const tokens = extractSupabaseTokensFromCookieHeader(cookieHeader);
     for (const token of tokens) {
@@ -176,94 +179,65 @@ export async function GET(request: Request) {
 
     let query = supabaseAdmin.from(table).select("*");
 
-    if (table === "material_prices") {
-      query = query
-        .eq("active", true)
-        .order("material_id", { ascending: true })
-        .order("profile_id", { ascending: true });
+    // Tables that use active flag and sort_order
+    const orderedTables = new Set([
+      "profiles",
+      "profile_options",
+      "materials",
+      "material_colours",
+      "underlays",
+      "flashing_types",
+      "labour_types",
+      "labour_rates",
+      "accessories",
+    ]);
+
+    if (table === "material_prices" || table === "material_rates") {
+      query = query.eq("active", true);
     } else if (table === "flashing_girth_bands") {
-      query = query
-        .eq("active", true)
-        .order("flashing_type_id", { ascending: true })
-        .order("sort_order", { ascending: true })
-        .order("min_girth", { ascending: true });
-    } else if (table === "flashing_prices") {
-      query = query
-        .eq("active", true)
-        .order("flashing_girth_band_id", { ascending: true })
-        .order("material_id", { ascending: true });
-    } else {
-      query = query
-        .eq("active", true)
-        .order("sort_order", { ascending: true });
+      query = query.eq("active", true).order("sort_order", { ascending: true }).order("min_girth", { ascending: true });
+    } else if (table === "flashing_prices" || table === "flashing_rates") {
+      query = query.eq("active", true);
+    } else if (table === "labour_factors" || table === "pricing_rules" || table === "flashing_surcharges") {
+      query = query.eq("active", true);
+    } else if (orderedTables.has(table)) {
+      query = query.eq("active", true).order("sort_order", { ascending: true });
     }
 
     const profileId = url.searchParams.get("profile_id");
-
     if (table === "profile_options" && profileId) {
       query = query.eq("profile_id", profileId);
     }
 
     const materialId = url.searchParams.get("material_id");
-
     if (table === "material_colours" && materialId) {
       query = query.eq("material_id", materialId);
     }
 
-    if (table === "material_prices") {
-      if (materialId) {
-        query = query.eq("material_id", materialId);
-      }
-
-      if (profileId) {
-        query = query.eq("profile_id", profileId);
-      }
-
+    if (table === "material_prices" || table === "material_rates") {
+      if (materialId) query = query.eq("material_id", materialId);
+      if (profileId) query = query.eq("profile_id", profileId);
       const profileOptionId = url.searchParams.get("profile_option_id");
-
-      if (profileOptionId) {
-        query = query.eq("profile_option_id", profileOptionId);
-      }
-
+      if (profileOptionId) query = query.eq("profile_option_id", profileOptionId);
       const colourId = url.searchParams.get("colour_id");
-
-      if (colourId) {
-        query = query.eq("colour_id", colourId);
-      }
+      if (colourId) query = query.eq("colour_id", colourId);
     }
 
     if (table === "flashing_girth_bands") {
       const flashingTypeId = url.searchParams.get("flashing_type_id");
-
-      if (flashingTypeId) {
-        query = query.eq("flashing_type_id", flashingTypeId);
-      }
+      if (flashingTypeId) query = query.eq("flashing_type_id", flashingTypeId);
     }
 
-    if (table === "flashing_prices") {
-      const flashingGirthBandId = url.searchParams.get(
-        "flashing_girth_band_id",
-      );
-
-      if (flashingGirthBandId) {
-        query = query.eq(
-          "flashing_girth_band_id",
-          flashingGirthBandId,
-        );
-      }
-
-      if (materialId) {
-        query = query.eq("material_id", materialId);
-      }
+    if (table === "flashing_prices" || table === "flashing_rates") {
+      const flashingGirthBandId = url.searchParams.get("flashing_girth_band_id");
+      if (flashingGirthBandId) query = query.eq("flashing_girth_band_id", flashingGirthBandId);
+      if (materialId) query = query.eq("material_id", materialId);
     }
 
     const { data, error } = await query;
 
     if (error) {
-      return NextResponse.json(
-        { error: error.message },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
     return NextResponse.json({ data: data ?? [] });
@@ -271,9 +245,7 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "Unable to load catalogue.",
+          error instanceof Error ? error.message : "Unable to load catalogue.",
       },
       { status: 500 },
     );
@@ -308,10 +280,7 @@ export async function POST(request: Request) {
       .single();
 
     if (error) {
-      return NextResponse.json(
-        { error: error.message },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
     return NextResponse.json({ data });
@@ -340,7 +309,6 @@ export async function DELETE(request: Request) {
 
   try {
     const body = await request.json();
-
     const table = body.table;
     const id = body.id;
 
@@ -358,16 +326,10 @@ export async function DELETE(request: Request) {
       );
     }
 
-    const { error } = await supabaseAdmin
-      .from(table)
-      .delete()
-      .eq("id", id);
+    const { error } = await supabaseAdmin.from(table).delete().eq("id", id);
 
     if (error) {
-      return NextResponse.json(
-        { error: error.message },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
     return NextResponse.json({ success: true });
