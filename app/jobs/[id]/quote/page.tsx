@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { getJob, type Job } from "@/lib/jobs";
+import { getJob, updateJob, type Job } from "@/lib/jobs";
 import {
   getQuoteForJob,
   createQuote,
@@ -279,7 +279,30 @@ export default function QuotePage() {
       );
       const saved = await saveQuoteLines(quote.id, lines);
       setSavedLines(saved);
-      setStatus(`Saved ${saved.length} line(s).`);
+
+      const sellTotal = engineResult.result?.sell?.total;
+      try {
+        if (job && job.status === "Opportunity") {
+          const today = new Date().toISOString().slice(0, 10);
+          await updateJob(job.id, {
+            status: "Quoted",
+            quoted_date: today,
+          });
+          setJob({
+            ...job,
+            status: "Quoted",
+            dates: { ...job.dates, quoted: today },
+          });
+        }
+      } catch {
+        // Non-fatal — lines already saved
+      }
+
+      const totalLabel =
+        sellTotal != null ? ` · sell ${money(sellTotal)}` : "";
+      setStatus(
+        `Saved ${saved.length} line(s)${totalLabel}. Return to the job card when ready.`,
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Save failed");
     } finally {
@@ -287,11 +310,21 @@ export default function QuotePage() {
     }
   }
 
-  const roofProfiles = profiles.filter(
-    (p) => !p.section || p.section === "Roofing",
+  function uniqueByName(list: Opt[]) {
+    const seen = new Set<string>();
+    return list.filter((p) => {
+      const key = (p.name ?? "").toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  const roofProfiles = uniqueByName(
+    profiles.filter((p) => p.section === "Roofing"),
   );
-  const wallProfiles = profiles.filter(
-    (p) => !p.section || p.section === "Wall Cladding",
+  const wallProfiles = uniqueByName(
+    profiles.filter((p) => p.section === "Wall Cladding"),
   );
 
   function SectionEditor({
@@ -540,6 +573,7 @@ export default function QuotePage() {
             {quote && (
               <p className="text-sm text-zinc-500">
                 {quote.quoteNumber} · {quote.status}
+                {job ? ` · job ${job.status}` : ""}
               </p>
             )}
           </div>
