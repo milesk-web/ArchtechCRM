@@ -1,8 +1,6 @@
 /**
  * POST /api/costing/calculate
- *
- * Body: QuoteInput (see lib/costing/types.ts)
- * Returns: QuoteResult + meta about loaded catalogue
+ * Body: QuoteInput → QuoteResult
  */
 
 import { NextResponse } from "next/server";
@@ -28,41 +26,58 @@ import type {
 
 export const dynamic = "force-dynamic";
 
+const DEFAULT_PRICING_RULES: PricingRule[] = [
+  { id: "def-mr", name: "Roof material markup", section: "Roofing", ruleType: "material_markup", value: 0.15 },
+  { id: "def-lr", name: "Roof labour markup", section: "Roofing", ruleType: "labour_markup", value: 0.15 },
+  { id: "def-mw", name: "Wall material markup", section: "Wall Cladding", ruleType: "material_markup", value: 0.3 },
+  { id: "def-lw", name: "Wall labour markup", section: "Wall Cladding", ruleType: "labour_markup", value: 0.3 },
+  { id: "def-sj", name: "Small job fee", section: null, ruleType: "small_job_fee", value: 350 },
+  { id: "def-me", name: "Measure fee", section: null, ruleType: "measure_fee", value: 1500 },
+  { id: "def-dk", name: "Distance per km", section: null, ruleType: "distance_rate_per_km", value: 1.5 },
+];
+
+async function safeSelect(table: string) {
+  const { data, error } = await supabaseAdmin.from(table).select("*").eq("active", true);
+  if (error) {
+    console.warn(`loadSnapshot: ${table}:`, error.message);
+    return [];
+  }
+  return data ?? [];
+}
+
 async function loadSnapshot(): Promise<CatalogueSnapshot> {
   const [
-    { data: profiles },
-    { data: profileOptions },
-    { data: materials },
-    { data: colours },
-    { data: materialRates },
-    { data: flashingTypes },
-    { data: flashingBands },
-    { data: flashingRates },
-    { data: flashingSurcharges },
-    { data: underlays },
-    { data: labourRates },
-    { data: labourFactors },
-    { data: accessories },
-    { data: pricingRules },
+    profiles,
+    profileOptions,
+    materials,
+    colours,
+    materialRates,
+    flashingTypes,
+    flashingBands,
+    flashingRates,
+    flashingSurcharges,
+    underlays,
+    labourRates,
+    labourFactors,
+    accessories,
   ] = await Promise.all([
-    supabaseAdmin.from("profiles").select("*").eq("active", true),
-    supabaseAdmin.from("profile_options").select("*").eq("active", true),
-    supabaseAdmin.from("materials").select("*").eq("active", true),
-    supabaseAdmin.from("material_colours").select("*").eq("active", true),
-    supabaseAdmin.from("material_rates").select("*").eq("active", true),
-    supabaseAdmin.from("flashing_types").select("*").eq("active", true),
-    supabaseAdmin.from("flashing_girth_bands").select("*").eq("active", true),
-    supabaseAdmin.from("flashing_rates").select("*").eq("active", true),
-    supabaseAdmin.from("flashing_surcharges").select("*").eq("active", true),
-    supabaseAdmin.from("underlays").select("*").eq("active", true),
-    supabaseAdmin.from("labour_rates").select("*").eq("active", true),
-    supabaseAdmin.from("labour_factors").select("*").eq("active", true),
-    supabaseAdmin.from("accessories").select("*").eq("active", true),
-    supabaseAdmin.from("pricing_rules").select("*").eq("active", true),
+    safeSelect("profiles"),
+    safeSelect("profile_options"),
+    safeSelect("materials"),
+    safeSelect("material_colours"),
+    safeSelect("material_rates"),
+    safeSelect("flashing_types"),
+    safeSelect("flashing_girth_bands"),
+    safeSelect("flashing_rates"),
+    safeSelect("flashing_surcharges"),
+    safeSelect("underlays"),
+    safeSelect("labour_rates"),
+    safeSelect("labour_factors"),
+    safeSelect("accessories"),
   ]);
 
   return {
-    profiles: (profiles ?? []).map(
+    profiles: profiles.map(
       (r): Profile => ({
         id: r.id,
         name: r.name,
@@ -71,7 +86,7 @@ async function loadSnapshot(): Promise<CatalogueSnapshot> {
         sortOrder: r.sort_order ?? 0,
       }),
     ),
-    profileOptions: (profileOptions ?? []).map(
+    profileOptions: profileOptions.map(
       (r): ProfileOption => ({
         id: r.id,
         profileId: r.profile_id,
@@ -79,7 +94,7 @@ async function loadSnapshot(): Promise<CatalogueSnapshot> {
         sortOrder: r.sort_order ?? 0,
       }),
     ),
-    materials: (materials ?? []).map(
+    materials: materials.map(
       (r): Material => ({
         id: r.id,
         name: r.name,
@@ -88,7 +103,7 @@ async function loadSnapshot(): Promise<CatalogueSnapshot> {
         sortOrder: r.sort_order ?? 0,
       }),
     ),
-    colours: (colours ?? []).map(
+    colours: colours.map(
       (r): MaterialColour => ({
         id: r.id,
         materialId: r.material_id,
@@ -96,7 +111,7 @@ async function loadSnapshot(): Promise<CatalogueSnapshot> {
         sortOrder: r.sort_order ?? 0,
       }),
     ),
-    materialRates: (materialRates ?? []).map(
+    materialRates: materialRates.map(
       (r): MaterialRate => ({
         id: r.id,
         materialId: r.material_id,
@@ -107,7 +122,7 @@ async function loadSnapshot(): Promise<CatalogueSnapshot> {
         unitCost: Number(r.unit_cost),
       }),
     ),
-    flashingTypes: (flashingTypes ?? []).map(
+    flashingTypes: flashingTypes.map(
       (r): FlashingType => ({
         id: r.id,
         name: r.name,
@@ -116,7 +131,7 @@ async function loadSnapshot(): Promise<CatalogueSnapshot> {
         sortOrder: r.sort_order ?? 0,
       }),
     ),
-    flashingBands: (flashingBands ?? []).map(
+    flashingBands: flashingBands.map(
       (r): FlashingGirthBand => ({
         id: r.id,
         minGirth: Number(r.min_girth),
@@ -124,7 +139,7 @@ async function loadSnapshot(): Promise<CatalogueSnapshot> {
         sortOrder: r.sort_order ?? 0,
       }),
     ),
-    flashingRates: (flashingRates ?? []).map(
+    flashingRates: flashingRates.map(
       (r): FlashingRate => ({
         id: r.id,
         flashingTypeId: r.flashing_type_id,
@@ -133,13 +148,13 @@ async function loadSnapshot(): Promise<CatalogueSnapshot> {
         unitCost: Number(r.unit_cost),
       }),
     ),
-    flashingSurcharges: (flashingSurcharges ?? []).map((r) => ({
+    flashingSurcharges: flashingSurcharges.map((r) => ({
       id: r.id,
       name: r.name,
       matchPattern: r.match_pattern,
       unitCostPerLm: Number(r.unit_cost_per_lm),
     })),
-    underlays: (underlays ?? []).map(
+    underlays: underlays.map(
       (r): Underlay => ({
         id: r.id,
         name: r.name,
@@ -151,7 +166,7 @@ async function loadSnapshot(): Promise<CatalogueSnapshot> {
         sortOrder: r.sort_order ?? 0,
       }),
     ),
-    labourRates: (labourRates ?? []).map(
+    labourRates: labourRates.map(
       (r): LabourRate => ({
         id: r.id,
         name: r.name,
@@ -161,7 +176,7 @@ async function loadSnapshot(): Promise<CatalogueSnapshot> {
         sortOrder: r.sort_order ?? 0,
       }),
     ),
-    labourFactors: (labourFactors ?? []).map(
+    labourFactors: labourFactors.map(
       (r): LabourFactor => ({
         id: r.id,
         name: r.name,
@@ -170,7 +185,7 @@ async function loadSnapshot(): Promise<CatalogueSnapshot> {
         multiplier: Number(r.multiplier),
       }),
     ),
-    accessories: (accessories ?? []).map(
+    accessories: accessories.map(
       (r): Accessory => ({
         id: r.id,
         name: r.name,
@@ -180,15 +195,8 @@ async function loadSnapshot(): Promise<CatalogueSnapshot> {
         sortOrder: r.sort_order ?? 0,
       }),
     ),
-    pricingRules: (pricingRules ?? []).map(
-      (r): PricingRule => ({
-        id: r.id,
-        name: r.name,
-        section: r.section,
-        ruleType: r.rule_type,
-        value: Number(r.value),
-      }),
-    ),
+    // Existing pricing_rules table has a different schema — use defaults
+    pricingRules: DEFAULT_PRICING_RULES,
   };
 }
 
