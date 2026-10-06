@@ -1,6 +1,8 @@
 /**
  * POST /api/costing/seed
  * Fast, batched seed. Idempotent.
+ * Does NOT touch pricing_rules (existing table has a different schema).
+ * Engine falls back to built-in mark-ups/fees.
  */
 
 import { NextResponse } from "next/server";
@@ -83,7 +85,7 @@ export async function POST() {
 
     const summary: string[] = [];
 
-    // ---- Materials (batch) ----
+    // Materials
     const { data: existingMats, error: matSelErr } = await supabaseAdmin
       .from("materials").select("id, name");
     if (matSelErr) throw new Error(`materials: ${matSelErr.message}`);
@@ -99,7 +101,7 @@ export async function POST() {
     }
     summary.push(`${matByName.size} materials`);
 
-    // ---- Profiles (batch) ----
+    // Profiles
     const { data: existingProfiles, error: profSelErr } = await supabaseAdmin
       .from("profiles").select("id, name, section");
     if (profSelErr) throw new Error(`profiles: ${profSelErr.message}`);
@@ -124,7 +126,7 @@ export async function POST() {
     }
     summary.push(`${profByKey.size} profiles`);
 
-    // ---- Profile options (batch) ----
+    // Profile options
     const { data: existingOpts } = await supabaseAdmin
       .from("profile_options").select("id, profile_id, value");
     const optKey = (pid: string, v: string) => `${pid}::${v}`;
@@ -149,13 +151,13 @@ export async function POST() {
     }
     summary.push(`${optByKey.size} options`);
 
-    // ---- Material rates (batch) ----
+    // Material rates
     const { data: existingRates, error: rateSelErr } = await supabaseAdmin
       .from("material_rates")
       .select("id, material_id, profile_id, profile_option_id");
     if (rateSelErr) {
       throw new Error(
-        `material_rates: ${rateSelErr.message}. Run migration 20261006_costing_engine.sql in Supabase SQL editor.`,
+        `material_rates: ${rateSelErr.message}. Run migration 20261006_costing_engine.sql in Supabase.`,
       );
     }
     const rateKey = (m: string, p: string, o: string) => `${m}|${p}|${o}`;
@@ -192,7 +194,7 @@ export async function POST() {
     }
     summary.push(`${ratesToInsert.length} new rates`);
 
-    // ---- Flashing types (batch) ----
+    // Flashing types
     const { data: existingFt } = await supabaseAdmin.from("flashing_types").select("id, name");
     const ftNames = new Set((existingFt ?? []).map((f) => f.name));
     const ftInsert = FLASHING_TYPES.filter((n) => !ftNames.has(n)).map((name, i) => ({
@@ -204,12 +206,12 @@ export async function POST() {
     }
     summary.push(`${ftInsert.length} flashings`);
 
-    // ---- Girth bands (batch) ----
+    // Girth bands
     const { data: existingBands, error: bandSelErr } = await supabaseAdmin
       .from("flashing_girth_bands").select("id, min_girth, max_girth");
     if (bandSelErr) {
       throw new Error(
-        `flashing_girth_bands: ${bandSelErr.message}. Run migration 20261006_costing_engine.sql.`,
+        `flashing_girth_bands: ${bandSelErr.message}. Create this table via the costing migration.`,
       );
     }
     const bandSet = new Set(
@@ -224,7 +226,7 @@ export async function POST() {
     }
     summary.push(`${bandsInsert.length} bands`);
 
-    // ---- Labour rates (batch) ----
+    // Labour rates
     const labourDefs = [
       { name: "Longrun", section: "Roofing", unit: "m2", base_rate: 16 },
       { name: "Tray / Architectural", section: "Roofing", unit: "m2", base_rate: 25 },
@@ -234,7 +236,7 @@ export async function POST() {
     const { data: existingLr, error: lrErr } = await supabaseAdmin
       .from("labour_rates").select("id, name, section");
     if (lrErr) {
-      throw new Error(`labour_rates: ${lrErr.message}. Run migration 20261006_costing_engine.sql.`);
+      throw new Error(`labour_rates: ${lrErr.message}. Create via costing migration.`);
     }
     const lrSet = new Set((existingLr ?? []).map((r) => `${r.section}::${r.name}`));
     const lrInsert = labourDefs
@@ -245,13 +247,17 @@ export async function POST() {
       if (error) throw new Error(`labour_rates insert: ${error.message}`);
     }
 
-    // ---- Labour factors ----
+    // Labour factors
     const factorDefs = [
       { name: "Pitch 21-30", factor_type: "pitch", match_value: "21-30", multiplier: 1.15 },
       { name: "Pitch 31-40", factor_type: "pitch", match_value: "31-40", multiplier: 1.3 },
       { name: "Pitch 40+", factor_type: "pitch", match_value: "40+", multiplier: 1.5 },
     ];
-    const { data: existingLf } = await supabaseAdmin.from("labour_factors").select("id, match_value");
+    const { data: existingLf, error: lfErr } = await supabaseAdmin
+      .from("labour_factors").select("id, match_value");
+    if (lfErr) {
+      throw new Error(`labour_factors: ${lfErr.message}. Create via costing migration.`);
+    }
     const lfSet = new Set((existingLf ?? []).map((f) => f.match_value));
     const lfInsert = factorDefs.filter((f) => !lfSet.has(f.match_value)).map((f) => ({ ...f, active: true }));
     if (lfInsert.length) {
@@ -259,32 +265,13 @@ export async function POST() {
       if (error) throw new Error(`labour_factors: ${error.message}`);
     }
 
-    // ---- Pricing rules ----
-    const ruleDefs = [
-      { name: "Roof material markup", section: "Roofing", rule_type: "material_markup", value: 0.15 },
-      { name: "Roof labour markup", section: "Roofing", rule_type: "labour_markup", value: 0.15 },
-      { name: "Wall material markup", section: "Wall Cladding", rule_type: "material_markup", value: 0.3 },
-      { name: "Wall labour markup", section: "Wall Cladding", rule_type: "labour_markup", value: 0.3 },
-      { name: "Small job fee", section: null, rule_type: "small_job_fee", value: 350 },
-      { name: "Measure fee", section: null, rule_type: "measure_fee", value: 1500 },
-      { name: "Distance per km", section: null, rule_type: "distance_rate_per_km", value: 1.5 },
-    ];
-    const { data: existingRules } = await supabaseAdmin
-      .from("pricing_rules").select("id, rule_type, section");
-    const ruleSet = new Set(
-      (existingRules ?? []).map((r) => `${r.rule_type}::${r.section ?? "null"}`),
-    );
-    const rulesInsert = ruleDefs
-      .filter((r) => !ruleSet.has(`${r.rule_type}::${r.section ?? "null"}`))
-      .map((r) => ({ ...r, active: true }));
-    if (rulesInsert.length) {
-      const { error } = await supabaseAdmin.from("pricing_rules").insert(rulesInsert);
-      if (error) throw new Error(`pricing_rules: ${error.message}`);
-    }
+    // NOTE: pricing_rules is intentionally skipped — your DB already has a
+    // different pricing_rules table (with family_id). The engine uses built-in
+    // defaults: Roof 15%, Wall 30%, measure $1500, small job $350.
 
     return NextResponse.json({
       ok: true,
-      message: `Seed complete: ${summary.join(", ")}.`,
+      message: `Seed complete: ${summary.join(", ")}. (Mark-ups use built-in defaults.)`,
     });
   } catch (error) {
     console.error("seed error:", error);
