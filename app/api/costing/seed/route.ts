@@ -1,8 +1,6 @@
 /**
  * POST /api/costing/seed
  * Fast, batched seed. Idempotent.
- * Does NOT touch pricing_rules (existing table has a different schema).
- * Engine falls back to built-in mark-ups/fees.
  */
 
 import { NextResponse } from "next/server";
@@ -27,6 +25,7 @@ const PROFILE_RATES = [
   { profile: "Corrugated", option: "0.4", material: "KiwiColour Vitor+", unit: "m2", unit_cost: 14.7446 },
   { profile: "Corrugated", option: "0.4", material: "Duralume", unit: "m2", unit_cost: 10.35 },
   { profile: "Corrugated", option: "0.55", material: "KiwiColour Vitor+", unit: "m2", unit_cost: 17.89 },
+  { profile: "Corrugated", option: "0.55", material: "KiwiColour Vitor ZX", unit: "m2", unit_cost: 21.64 },
   { profile: "Corrugated", option: "0.55", material: "Duralume", unit: "m2", unit_cost: 14.01 },
   { profile: "Corrugated", option: "0.55", material: "KiwiColour LUX", unit: "m2", unit_cost: 29.15 },
   { profile: "TRS5", option: "0.4", material: "KiwiColour Vitor+", unit: "m2", unit_cost: 14.7446 },
@@ -101,7 +100,7 @@ export async function POST() {
     }
     summary.push(`${matByName.size} materials`);
 
-    // Profiles
+    // Profiles — only ensure canonical sections (Roofing / Wall Cladding)
     const { data: existingProfiles, error: profSelErr } = await supabaseAdmin
       .from("profiles").select("id, name, section");
     if (profSelErr) throw new Error(`profiles: ${profSelErr.message}`);
@@ -109,6 +108,14 @@ export async function POST() {
     const profByKey = new Map(
       (existingProfiles ?? []).map((p) => [profKey(p.name, p.section), p.id]),
     );
+    // Also index by name only (all IDs for that profile name)
+    const profIdsByName = new Map<string, string[]>();
+    for (const p of existingProfiles ?? []) {
+      const list = profIdsByName.get(p.name) ?? [];
+      list.push(p.id);
+      profIdsByName.set(p.name, list);
+    }
+
     const profsToInsert = PROFILE_DEFS.filter(
       (p) => !profByKey.has(profKey(p.name, p.section)),
     ).map((p, i) => ({
@@ -122,11 +129,16 @@ export async function POST() {
       const { data: inserted, error } = await supabaseAdmin
         .from("profiles").insert(profsToInsert).select("id, name, section");
       if (error) throw new Error(`profiles insert: ${error.message}`);
-      for (const p of inserted ?? []) profByKey.set(profKey(p.name, p.section), p.id);
+      for (const p of inserted ?? []) {
+        profByKey.set(profKey(p.name, p.section), p.id);
+        const list = profIdsByName.get(p.name) ?? [];
+        list.push(p.id);
+        profIdsByName.set(p.name, list);
+      }
     }
     summary.push(`${profByKey.size} profiles`);
 
-    // Profile options
+    // Profile options for every profile id we know
     const { data: existingOpts } = await supabaseAdmin
       .from("profile_options").select("id, profile_id, value");
     const optKey = (pid: string, v: string) => `${pid}::${v}`;
@@ -135,29 +147,58 @@ export async function POST() {
     );
     const optsToInsert: { profile_id: string; value: string; active: boolean; sort_order: number }[] = [];
     for (const p of PROFILE_DEFS) {
-      const pid = profByKey.get(profKey(p.name, p.section));
-      if (!pid) continue;
-      p.options.forEach((value, oi) => {
-        if (!optByKey.has(optKey(pid, value))) {
-          optsToInsert.push({ profile_id: pid, value, active: true, sort_order: oi });
-        }
-      });
+      const ids = profIdsByName.get(p.name) ?? [];
+      // also canonical
+      const canonical = profByKey.get(profKey(p.name, p.section));
+      if (canonical && !ids.includes(canonical)) ids.push(canonical);
+      for (const pid of ids) {
+        p.options.forEach((value, oi) => {
+          // normalize option values: "0.40" vs "0.4"
+          const variants = [value];
+          if (value === "0.4") variants.push("0.40");
+          if (value === "0.55") variants.push("0.550");
+          for (const v of variants) {
+            if (!optByKey.has(optKey(pid, v))) {
+              // only insert canonical value once per profile
+              if (v === value) {
+                optsToInsert.push({ profile_id: pid, value, active: true, sort_order: oi });
+                optByKey.set(optKey(pid, value), "pending");
+              }
+            }
+          }
+        });
+      }
     }
-    if (optsToInsert.length) {
+    // dedupe pending inserts
+    const seenOpt = new Set<string>();
+    const uniqueOpts = optsToInsert.filter((o) => {
+      const k = optKey(o.profile_id, o.value);
+      if (seenOpt.has(k)) return false;
+      seenOpt.add(k);
+      return true;
+    });
+    if (uniqueOpts.length) {
       const { data: inserted, error } = await supabaseAdmin
-        .from("profile_options").insert(optsToInsert).select("id, profile_id, value");
+        .from("profile_options").insert(uniqueOpts).select("id, profile_id, value");
       if (error) throw new Error(`profile_options insert: ${error.message}`);
       for (const o of inserted ?? []) optByKey.set(optKey(o.profile_id, o.value), o.id);
     }
+    // reload options to get real ids
+    const { data: allOpts } = await supabaseAdmin
+      .from("profile_options").select("id, profile_id, value");
+    optByKey.clear();
+    for (const o of allOpts ?? []) {
+      optByKey.set(optKey(o.profile_id, o.value), o.id);
+    }
     summary.push(`${optByKey.size} options`);
 
-    // Material rates
+    // Material rates — for EVERY profile id with matching name
     const { data: existingRates, error: rateSelErr } = await supabaseAdmin
       .from("material_rates")
       .select("id, material_id, profile_id, profile_option_id");
     if (rateSelErr) {
       throw new Error(
-        `material_rates: ${rateSelErr.message}. Run migration 20261006_costing_engine.sql in Supabase.`,
+        `material_rates: ${rateSelErr.message}. Run migration 20261006_costing_engine.sql.`,
       );
     }
     const rateKey = (m: string, p: string, o: string) => `${m}|${p}|${o}`;
@@ -166,33 +207,59 @@ export async function POST() {
         rateKey(r.material_id, r.profile_id, r.profile_option_id ?? ""),
       ),
     );
+
     const ratesToInsert: Record<string, unknown>[] = [];
     for (const row of PROFILE_RATES) {
-      const profileId =
-        profByKey.get(profKey(row.profile, "Roofing")) ??
-        profByKey.get(profKey(row.profile, "Wall Cladding"));
       const materialId = matByName.get(row.material);
-      if (!profileId || !materialId) continue;
-      const optionId = optByKey.get(optKey(profileId, row.option));
-      if (!optionId) continue;
-      const k = rateKey(materialId, profileId, optionId);
-      if (rateSet.has(k)) continue;
-      rateSet.add(k);
-      ratesToInsert.push({
-        material_id: materialId,
-        profile_id: profileId,
-        profile_option_id: optionId,
-        colour_id: null,
-        unit: row.unit,
-        unit_cost: row.unit_cost,
-        active: true,
-      });
+      if (!materialId) continue;
+
+      const profileIds = profIdsByName.get(row.profile) ?? [];
+      if (profileIds.length === 0) continue;
+
+      for (const profileId of profileIds) {
+        // try option value and common variants
+        const optionVariants = [row.option];
+        if (row.option === "0.4") optionVariants.push("0.40");
+        if (row.option === "0.55") optionVariants.push("0.550");
+
+        let optionId: string | undefined;
+        for (const v of optionVariants) {
+          const id = optByKey.get(optKey(profileId, v));
+          if (id && id !== "pending") {
+            optionId = id;
+            break;
+          }
+        }
+        if (!optionId) continue;
+
+        const k = rateKey(materialId, profileId, optionId);
+        if (rateSet.has(k)) continue;
+        rateSet.add(k);
+        ratesToInsert.push({
+          material_id: materialId,
+          profile_id: profileId,
+          profile_option_id: optionId,
+          colour_id: null,
+          unit: row.unit,
+          unit_cost: row.unit_cost,
+          active: true,
+        });
+      }
     }
+
     if (ratesToInsert.length) {
-      const { error } = await supabaseAdmin.from("material_rates").insert(ratesToInsert);
-      if (error) throw new Error(`material_rates insert: ${error.message}`);
+      // insert in chunks of 50
+      for (let i = 0; i < ratesToInsert.length; i += 50) {
+        const chunk = ratesToInsert.slice(i, i + 50);
+        const { error } = await supabaseAdmin.from("material_rates").insert(chunk);
+        if (error) throw new Error(`material_rates insert: ${error.message}`);
+      }
     }
-    summary.push(`${ratesToInsert.length} new rates`);
+
+    const { count: rateCount } = await supabaseAdmin
+      .from("material_rates")
+      .select("id", { count: "exact", head: true });
+    summary.push(`${ratesToInsert.length} new rates (total ${rateCount ?? "?"})`);
 
     // Flashing types
     const { data: existingFt } = await supabaseAdmin.from("flashing_types").select("id, name");
@@ -210,9 +277,7 @@ export async function POST() {
     const { data: existingBands, error: bandSelErr } = await supabaseAdmin
       .from("flashing_girth_bands").select("id, min_girth, max_girth");
     if (bandSelErr) {
-      throw new Error(
-        `flashing_girth_bands: ${bandSelErr.message}. Create this table via the costing migration.`,
-      );
+      throw new Error(`flashing_girth_bands: ${bandSelErr.message}`);
     }
     const bandSet = new Set(
       (existingBands ?? []).map((b) => `${b.min_girth}-${b.max_girth}`),
@@ -235,9 +300,7 @@ export async function POST() {
     ];
     const { data: existingLr, error: lrErr } = await supabaseAdmin
       .from("labour_rates").select("id, name, section");
-    if (lrErr) {
-      throw new Error(`labour_rates: ${lrErr.message}. Create via costing migration.`);
-    }
+    if (lrErr) throw new Error(`labour_rates: ${lrErr.message}`);
     const lrSet = new Set((existingLr ?? []).map((r) => `${r.section}::${r.name}`));
     const lrInsert = labourDefs
       .filter((r) => !lrSet.has(`${r.section}::${r.name}`))
@@ -255,9 +318,7 @@ export async function POST() {
     ];
     const { data: existingLf, error: lfErr } = await supabaseAdmin
       .from("labour_factors").select("id, match_value");
-    if (lfErr) {
-      throw new Error(`labour_factors: ${lfErr.message}. Create via costing migration.`);
-    }
+    if (lfErr) throw new Error(`labour_factors: ${lfErr.message}`);
     const lfSet = new Set((existingLf ?? []).map((f) => f.match_value));
     const lfInsert = factorDefs.filter((f) => !lfSet.has(f.match_value)).map((f) => ({ ...f, active: true }));
     if (lfInsert.length) {
@@ -265,13 +326,9 @@ export async function POST() {
       if (error) throw new Error(`labour_factors: ${error.message}`);
     }
 
-    // NOTE: pricing_rules is intentionally skipped — your DB already has a
-    // different pricing_rules table (with family_id). The engine uses built-in
-    // defaults: Roof 15%, Wall 30%, measure $1500, small job $350.
-
     return NextResponse.json({
       ok: true,
-      message: `Seed complete: ${summary.join(", ")}. (Mark-ups use built-in defaults.)`,
+      message: `Seed complete: ${summary.join(", ")}.`,
     });
   } catch (error) {
     console.error("seed error:", error);
