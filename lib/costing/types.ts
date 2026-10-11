@@ -246,6 +246,8 @@ export type QuoteResult = {
     labourWall: number;
   };
   warnings: string[];
+  /** True only when every generated line is priced and no blocking warnings remain. */
+  readyToIssue: boolean;
   meta: {
     calculatedAt: string;
   };
