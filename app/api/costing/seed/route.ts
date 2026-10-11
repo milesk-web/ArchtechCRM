@@ -3,8 +3,24 @@
  * Fast, batched seed. Idempotent.
  */
 
+import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+
+function isAuthorized(request: Request): boolean {
+  const expected = process.env.COSTING_SEED_SECRET;
+  const authorization = request.headers.get("authorization") ?? "";
+  const provided = authorization.match(/^Bearer\\s+(.+)$/i)?.[1] ?? "";
+
+  if (!expected || !provided) return false;
+
+  const expectedBytes = Buffer.from(expected);
+  const providedBytes = Buffer.from(provided);
+  return (
+    expectedBytes.length === providedBytes.length &&
+    timingSafeEqual(expectedBytes, providedBytes)
+  );
+}
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -73,7 +89,11 @@ const GIRTH_BANDS = [
   [601, 650], [651, 700], [701, 750], [751, 800], [801, 850], [851, 900],
 ];
 
-export async function POST() {
+export async function POST(request: Request) {
+  if (!isAuthorized(request)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
       return NextResponse.json({ error: "Missing NEXT_PUBLIC_SUPABASE_URL" }, { status: 500 });
