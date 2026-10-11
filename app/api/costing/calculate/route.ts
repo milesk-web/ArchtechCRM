@@ -4,6 +4,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { getSession } from "@/lib/auth/session";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { calculateQuote } from "@/lib/costing/engine";
 import type {
@@ -39,8 +40,7 @@ const DEFAULT_PRICING_RULES: PricingRule[] = [
 async function safeSelect(table: string) {
   const { data, error } = await supabaseAdmin.from(table).select("*").eq("active", true);
   if (error) {
-    console.warn(`loadSnapshot: ${table}:`, error.message);
-    return [];
+    throw new Error(`Unable to load costing catalogue table "${table}": ${error.message}`);
   }
   return data ?? [];
 }
@@ -201,8 +201,16 @@ async function loadSnapshot(): Promise<CatalogueSnapshot> {
 }
 
 export async function POST(request: Request) {
+  const session = await getSession(request);
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const body = (await request.json()) as QuoteInput;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ error: "Request body must be a quote input object" }, { status: 400 });
+    }
     const catalogue = await loadSnapshot();
     const result = calculateQuote(body, catalogue);
 
@@ -222,9 +230,13 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          error instanceof Error ? error.message : "Costing calculation failed",
+          error instanceof SyntaxError
+            ? "Request body must be valid JSON"
+            : error instanceof Error
+              ? error.message
+              : "Costing calculation failed",
       },
-      { status: 500 },
+      { status: error instanceof SyntaxError ? 400 : 500 },
     );
   }
 }

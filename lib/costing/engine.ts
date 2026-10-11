@@ -504,11 +504,30 @@ export function calculateQuote(
     });
   }
 
+  // Derive sell totals from the same section-priced lines shown to users.
+  // Applying one markup to the combined total is incorrect when a quote
+  // contains both roofing and wall cladding with different margin rules.
   const sellMaterial = round2(
-    directMaterial * (1 + (input.roof ? materialRoof : materialWall)),
+    lines
+      .filter((line) =>
+        ["Material", "Flashing", "Underlay", "Accessory"].includes(line.category),
+      )
+      .reduce(
+        (sum, line) =>
+          sum +
+          (line.sellPrice == null ? 0 : line.sellPrice * line.quantity),
+        0,
+      ),
   );
   const sellLabour = round2(
-    directLabour * (1 + (input.roof ? labourRoof : labourWall)),
+    lines
+      .filter((line) => line.category === "Labour")
+      .reduce(
+        (sum, line) =>
+          sum +
+          (line.sellPrice == null ? 0 : line.sellPrice * line.quantity),
+        0,
+      ),
   );
   const sellFees = directFees;
 
