@@ -395,6 +395,19 @@ export function calculateQuote(
     }
   }
 
+  for (const [sectionName, sectionInput] of [
+    ["Roofing", input.roof],
+    ["Wall Cladding", input.wall],
+  ] as const) {
+    if (!sectionInput) continue;
+    if (!Number.isFinite(sectionInput.areaM2) || sectionInput.areaM2 <= 0) {
+      warnings.push(`${sectionName}: Area must be greater than zero.`);
+    }
+    if (!sectionInput.profileId || !sectionInput.profileOptionId || !sectionInput.materialId) {
+      warnings.push(`${sectionName}: Select a profile, profile option, and material.`);
+    }
+  }
+
   const materialRoof =
     input.margins?.materialRoof ??
     findRule(catalogue.pricingRules, "material_markup", "Roofing") ??
