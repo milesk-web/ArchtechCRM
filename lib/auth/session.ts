@@ -17,9 +17,12 @@ const SESSION_COOKIE_PREFIX = "archtech_session";
 const CHUNK_SIZE = 3800;
 
 async function getEncryptionKey(): Promise<CryptoKey> {
-  const secret =
-    process.env.AUTH_SECRET ||
-    "archtech-crm-dev-fallback-secret-minimum-32-chars!";
+  const secret = process.env.AUTH_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error(
+      "AUTH_SECRET must be configured with at least 32 characters before sessions can be encrypted or decrypted.",
+    );
+  }
   const keyBuffer = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(secret),
