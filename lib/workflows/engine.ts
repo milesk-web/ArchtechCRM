@@ -190,7 +190,7 @@ export function evaluateWorkflow(
   const missingRequiredFields = visibleFields
     .filter((field) => {
       const required = field.required === true ||
-        evaluateCondition(field.requiredWhen, answers);
+        (field.requiredWhen ? evaluateCondition(field.requiredWhen, answers) : false);
       const value = readAnswer(answers, field.id);
       return required && (!isSet(value) || (typeof value === "string" && value.trim() === ""));
     })
