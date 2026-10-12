@@ -6,6 +6,8 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 type IssueLine = {
   id: string;
+  section: string;
+  category: string;
   description: string | null;
   quantity: number | string | null;
   unit_cost: number | string | null;
@@ -16,6 +18,15 @@ function validateLines(lines: IssueLine[]): string[] {
   const errors: string[] = [];
   if (lines.length === 0) {
     return ["Add and save at least one quote line before issuing."];
+  }
+
+  const sections = new Set(lines.map((line) => line.section).filter((section) => section === "Roofing" || section === "Wall Cladding"));
+  for (const section of sections) {
+    const sectionLines = lines.filter((line) => line.section === section);
+    const hasMaterial = sectionLines.some((line) => line.category === "Material");
+    const hasLabour = sectionLines.some((line) => line.category === "Labour");
+    if (!hasMaterial) errors.push(`${section}: a priced profile/material line is required.`);
+    if (!hasLabour) errors.push(`${section}: a priced labour line is required.`);
   }
 
   for (const line of lines) {
@@ -74,7 +85,7 @@ export async function POST(request: Request, context: RouteContext) {
 
     const { data: lines, error: linesError } = await supabaseAdmin
       .from("quote_lines")
-      .select("id, description, quantity, unit_cost, sell_price")
+      .select("id, section, category, description, quantity, unit_cost, sell_price")
       .eq("quote_id", id);
 
     if (linesError) {
