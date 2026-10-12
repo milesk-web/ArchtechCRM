@@ -57,8 +57,6 @@ export default function PricingPage() {
   const [error, setError] = useState("");
 
   async function load() {
-    setLoading(true);
-    setError("");
 
     try {
       const [
@@ -102,8 +100,6 @@ export default function PricingPage() {
 
   useEffect(() => {
     void load();
-    // This loader intentionally runs once to seed the initial selection.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   async function createFamily() {
     if (!name.trim()) return;
