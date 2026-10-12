@@ -310,6 +310,9 @@ export async function POST(request: Request) {
       );
     }
     const workflowDefinition = workflowRow.definition as WorkflowDefinition;
+    if (workflowDefinition.key !== workflowRow.workflow_key || workflowDefinition.version !== workflowRow.version) {
+      throw new Error("Published workflow metadata does not match its stored version.");
+    }
     const workflowDefinitionErrors = validateWorkflowDefinition(workflowDefinition);
     if (workflowDefinitionErrors.length > 0) {
       throw new Error(`The published workflow definition is invalid: ${workflowDefinitionErrors.join(" ")}`);
