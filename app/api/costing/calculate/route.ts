@@ -248,13 +248,16 @@ export async function POST(request: Request) {
   }
 
   try {
-    const requestBody = (await request.json()) as QuoteInput & { quoteId?: unknown; workflowAnswers?: unknown };
+    const requestBody = (await request.json()) as QuoteInput & { quoteId?: unknown; workflowAnswers?: unknown; workflowVersion?: unknown };
     if (!requestBody || typeof requestBody !== "object" || Array.isArray(requestBody)) {
       return NextResponse.json({ error: "Request body must be a quote input object" }, { status: 400 });
     }
-    const { quoteId: rawQuoteId, workflowAnswers: rawWorkflowAnswers, ...body } = requestBody;
+    const { quoteId: rawQuoteId, workflowAnswers: rawWorkflowAnswers, workflowVersion: rawWorkflowVersion, ...body } = requestBody;
     if (rawQuoteId != null && (typeof rawQuoteId !== "string" || !rawQuoteId.trim())) {
       return NextResponse.json({ error: "quoteId must be a non-empty string." }, { status: 400 });
+    }
+    if (rawWorkflowVersion != null && (!Number.isInteger(rawWorkflowVersion) || Number(rawWorkflowVersion) < 1)) {
+      return NextResponse.json({ error: "workflowVersion must be a positive integer." }, { status: 400 });
     }
 
     let quoteId: string | null = null;
@@ -300,6 +303,12 @@ export async function POST(request: Request) {
     if (!workflowRow) {
       throw new Error("No published quote workflow exists. Publish a workflow before calculating quotes.");
     }
+    if (quoteId && rawWorkflowVersion !== workflowRow.version) {
+      return NextResponse.json(
+        { error: "The published quote workflow changed since this page loaded. Reload the quote before recalculating." },
+        { status: 409 },
+      );
+    }
     const workflowDefinition = workflowRow.definition as WorkflowDefinition;
     const workflowDefinitionErrors = validateWorkflowDefinition(workflowDefinition);
     if (workflowDefinitionErrors.length > 0) {
@@ -334,6 +343,8 @@ export async function POST(request: Request) {
           quote_id: quoteId,
           rule_set_id: ruleSet.id,
           rule_set_version: ruleSet.version,
+          workflow_id: workflowRow.id,
+          workflow_version: workflowRow.version,
           engine_version: "1.1",
           input_snapshot: { ...body, workflowAnswers },
           catalogue_snapshot: catalogue,
