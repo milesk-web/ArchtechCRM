@@ -290,21 +290,25 @@ export default function PricingPage() {
     <div className="min-h-screen bg-[#f4f4f1] text-[#242422]">
       <header className="border-b border-black/[0.08] bg-[#fafaf8]">
         <div className="mx-auto flex max-w-[1180px] items-center justify-between gap-4 px-5 py-6 md:px-9">
-          <div className="text-[10px] uppercase tracking-[0.17em] text-black/30">
-            Archtech
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.17em] text-black/30">
+              Archtech
+            </div>
+            <h1 className="mt-1 text-[25px] font-medium tracking-[-0.035em]">
+              Pricing
+            </h1>
+            <p className="mt-2 max-w-[600px] text-[11px] leading-5 text-black/40">
+              Configure the product and pricing structure used by quoting.
+            </p>
           </div>
-
-          <h1 className="mt-1 text-[25px] font-medium tracking-[-0.035em]">
-            Pricing
-          </h1>
-
-          <p className="mt-2 max-w-[600px] text-[11px] leading-5 text-black/40">
-            Configure the product and pricing structure used by
-            quoting.
-          </p>
-          <Link href="/costing-rules" className="shrink-0 rounded-md border border-black/15 px-4 py-2 text-[10px] uppercase tracking-[0.1em] text-black/60 hover:bg-black/[0.03]">
-            Costing rules & versions
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link href="/costing-rules" className="shrink-0 rounded-md border border-black/15 px-4 py-2 text-[10px] uppercase tracking-[0.1em] text-black/60 hover:bg-black/[0.03]">
+              Costing rules & versions
+            </Link>
+            <Link href="/workflows" className="shrink-0 rounded-md border border-black/15 px-4 py-2 text-[10px] uppercase tracking-[0.1em] text-black/60 hover:bg-black/[0.03]">
+              Workflow builder
+            </Link>
+          </div>
         </div>
       </header>
 
