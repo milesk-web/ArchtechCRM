@@ -21,17 +21,60 @@ create unique index if not exists costing_rule_sets_one_published_idx
 create index if not exists costing_rule_sets_status_version_idx
   on costing_rule_sets (status, version desc);
 
+-- Publish a draft and archive the prior published version in one transaction.
+create or replace function publish_costing_rule_set(p_draft_id uuid)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $
+declare
+  draft_row costing_rule_sets%rowtype;
+begin
+  perform pg_advisory_xact_lock(hashtext('publish_costing_rule_set'));
+
+  select * into draft_row
+  from costing_rule_sets
+  where id = p_draft_id
+  for update;
+
+  if not found or draft_row.status <> 'draft' then
+    raise exception 'Only a draft costing rule set can be published';
+  end if;
+
+  update costing_rule_sets
+  set status = 'archived'
+  where status = 'published';
+
+  update costing_rule_sets
+  set status = 'published', published_at = now()
+  where id = p_draft_id and status = 'draft';
+
+  return p_draft_id;
+end;
+$;
+
+revoke all on function publish_costing_rule_set(uuid) from public;
+grant execute on function publish_costing_rule_set(uuid) to service_role;
+
 create or replace function prevent_published_costing_rule_edits()
 returns trigger
 language plpgsql
 as $$
 begin
-  if old.status in ('published', 'archived') and new.rules is distinct from old.rules then
+  if old.status in ('published', 'archived') and (
+    new.name is distinct from old.name or
+    new.version is distinct from old.version or
+    new.rules is distinct from old.rules or
+    new.created_by is distinct from old.created_by or
+    new.created_at is distinct from old.created_at or
+    new.published_at is distinct from old.published_at
+  ) then
     raise exception 'Published costing rule versions are immutable; create a new version instead';
   end if;
   return new;
 end;
-$$;
+$;
 
 drop trigger if exists costing_rule_sets_immutable_rules on costing_rule_sets;
 create trigger costing_rule_sets_immutable_rules
