@@ -127,37 +127,19 @@ export default function CataloguePage() {
   }, []);
 
   useEffect(() => {
-    if (selectedProfile) {
-      void loadProfileOptions(selectedProfile);
-    } else {
-      setProfileOptions([]);
-    }
+    if (selectedProfile) void loadProfileOptions(selectedProfile);
   }, [selectedProfile]);
 
   useEffect(() => {
-    if (selectedMaterial) {
-      void loadMaterialColours(selectedMaterial);
-    } else {
-      setMaterialColours([]);
-    }
+    if (selectedMaterial) void loadMaterialColours(selectedMaterial);
   }, [selectedMaterial]);
 
   useEffect(() => {
-    if (pricingProfile) {
-      void loadPricingOptions(pricingProfile);
-    } else {
-      setPricingOptions([]);
-      setPricingOption("");
-    }
+    if (pricingProfile) void loadPricingOptions(pricingProfile);
   }, [pricingProfile]);
 
   useEffect(() => {
-    if (pricingMaterial) {
-      void loadPricingColours(pricingMaterial);
-    } else {
-      setPricingColours([]);
-      setPricingColour("");
-    }
+    if (pricingMaterial) void loadPricingColours(pricingMaterial);
   }, [pricingMaterial]);
 
   const selectedPricingProfile = profiles.find(
@@ -209,6 +191,7 @@ export default function CataloguePage() {
         !profilesData.some((profile) => profile.id === selectedProfile)
       ) {
         setSelectedProfile("");
+        setProfileOptions([]);
       }
 
       if (
@@ -216,6 +199,7 @@ export default function CataloguePage() {
         !materialsData.some((material) => material.id === selectedMaterial)
       ) {
         setSelectedMaterial("");
+        setMaterialColours([]);
       }
 
       if (!selectedProfile && profilesData.length > 0) {
@@ -231,6 +215,8 @@ export default function CataloguePage() {
         !materialsData.some((material) => material.id === pricingMaterial)
       ) {
         setPricingMaterial("");
+        setPricingColours([]);
+        setPricingColour("");
       }
 
       if (!pricingMaterial && materialsData.length > 0) {
@@ -242,6 +228,8 @@ export default function CataloguePage() {
         !profilesData.some((profile) => profile.id === pricingProfile)
       ) {
         setPricingProfile("");
+        setPricingOptions([]);
+        setPricingOption("");
       }
     } catch (err) {
       setError(
@@ -1418,7 +1406,9 @@ export default function CataloguePage() {
                       value={pricingMaterial}
                       onChange={(value) => {
                         setPricingMaterial(value);
+                        setPricingColours([]);
                         setPricingProfile("");
+                        setPricingOptions([]);
                         setPricingOption("");
                         setPricingColour("");
                       }}
@@ -1436,6 +1426,7 @@ export default function CataloguePage() {
                       value={pricingProfile}
                       onChange={(value) => {
                         setPricingProfile(value);
+                        setPricingOptions([]);
                         setPricingOption("");
                       }}
                       options={[
