@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
+import { isCostingAdmin } from "@/lib/auth/costing-admin";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 
 const RULE_TYPES = new Set([
@@ -94,6 +95,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const canEdit = isCostingAdmin(session.user.email);
   try {
     const [publishedResult, draftResult] = await Promise.all([
       supabaseAdmin
@@ -103,13 +105,15 @@ export async function GET(request: Request) {
         .order("version", { ascending: false })
         .limit(1)
         .maybeSingle(),
-      supabaseAdmin
-        .from("costing_rule_sets")
-        .select("id, name, version, status, rules, published_at, created_at")
-        .eq("status", "draft")
-        .order("version", { ascending: false })
-        .limit(1)
-        .maybeSingle(),
+      canEdit
+        ? supabaseAdmin
+            .from("costing_rule_sets")
+            .select("id, name, version, status, rules, published_at, created_at")
+            .eq("status", "draft")
+            .order("version", { ascending: false })
+            .limit(1)
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
     ]);
 
     if (publishedResult.error || draftResult.error) {
@@ -121,6 +125,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       published: publishedResult.data,
       draft: draftResult.data,
+      canEdit,
     });
   } catch (error) {
     console.error("costing/rules GET error:", error);
@@ -135,6 +140,12 @@ export async function POST(request: Request) {
   const session = await getSession(request);
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!isCostingAdmin(session.user.email)) {
+    return NextResponse.json(
+      { error: "Costing rule changes require an authorised email in COSTING_ADMIN_EMAILS." },
+      { status: 403 },
+    );
   }
 
   try {
