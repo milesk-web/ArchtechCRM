@@ -343,6 +343,8 @@ export async function POST(request: Request) {
           quote_id: quoteId,
           rule_set_id: ruleSet.id,
           rule_set_version: ruleSet.version,
+          workflow_id: workflowRow.id,
+          workflow_version: workflowRow.version,
           engine_version: "1.1",
           input_snapshot: { ...body, workflowAnswers },
           catalogue_snapshot: catalogue,
