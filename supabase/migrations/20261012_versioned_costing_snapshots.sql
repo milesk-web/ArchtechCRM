@@ -27,7 +27,7 @@ returns uuid
 language plpgsql
 security definer
 set search_path = public
-as $
+as $publish_costing_rule_set$
 declare
   draft_row costing_rule_sets%rowtype;
 begin
@@ -52,7 +52,7 @@ begin
 
   return p_draft_id;
 end;
-$;
+$publish_costing_rule_set$;
 
 revoke all on function publish_costing_rule_set(uuid) from public;
 grant execute on function publish_costing_rule_set(uuid) to service_role;
