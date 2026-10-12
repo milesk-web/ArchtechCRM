@@ -28,6 +28,7 @@ Before enabling the versioned quote features, verify which schema migrations hav
 2. `supabase/migrations/20261006_costing_engine.sql`.
 3. `supabase/migrations/20261012_versioned_costing_snapshots.sql`.
 4. `supabase/migrations/20261013_versioned_quote_workflows.sql`.
+5. `supabase/migrations/20261014_quote_snapshot_workflow_fk.sql`.
 
 Do not blindly re-run legacy SQL that creates policies without checking whether those policies already exist.
 
@@ -35,7 +36,7 @@ Do not blindly re-run legacy SQL that creates policies without checking whether 
 
 - `/costing-rules` edits a draft costing rule set and publishes an immutable version. Only the published version is used for new calculations.
 - `/workflows` edits the conditional question and generated-work definition for the `roofing-cladding` workflow. Conditions support nested `all`, `any`, and `not`, plus equality, numeric comparisons, contains, and set/unset operators.
-- Each calculation associated with a quote stores its input, catalogue snapshot, result, costing rule-set ID/version, and engine version in `quote_calculation_snapshots`.
+- Each calculation associated with a quote stores its input, catalogue snapshot, result, costing rule-set ID/version, workflow ID/version, and engine version in `quote_calculation_snapshots`.
 - The issue-quote endpoint requires a ready calculation snapshot and verifies that the saved quote lines still match it.
 
 The current costing rule sets and workflow definitions are global to this installation. Organisation-scoped pricing and workflow configuration should be added only alongside an explicit tenancy and permission model.

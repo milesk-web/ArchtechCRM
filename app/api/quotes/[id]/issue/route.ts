@@ -171,7 +171,7 @@ export async function POST(request: Request, context: RouteContext) {
 
     const { data: latestSnapshot, error: snapshotError } = await supabaseAdmin
       .from("quote_calculation_snapshots")
-      .select("id, rule_set_version, result_snapshot")
+      .select("id, rule_set_version, workflow_id, workflow_version, result_snapshot")
       .eq("quote_id", id)
       .order("created_at", { ascending: false })
       .limit(1)
@@ -183,6 +183,12 @@ export async function POST(request: Request, context: RouteContext) {
     if (!latestSnapshot) {
       return NextResponse.json(
         { error: "Calculate and save this quote before issuing it." },
+        { status: 422 },
+      );
+    }
+    if (!latestSnapshot.workflow_id || !latestSnapshot.workflow_version) {
+      return NextResponse.json(
+        { error: "This calculation predates workflow version tracking. Recalculate and save the quote before issuing it." },
         { status: 422 },
       );
     }
@@ -247,7 +253,7 @@ export async function POST(request: Request, context: RouteContext) {
       jobStatus = "Quoted";
     }
 
-    return NextResponse.json({ success: true, quoteId: id, status: "Issued", jobStatus, calculationSnapshotId: latestSnapshot.id, ruleSetVersion: latestSnapshot.rule_set_version });
+    return NextResponse.json({ success: true, quoteId: id, status: "Issued", jobStatus, calculationSnapshotId: latestSnapshot.id, ruleSetVersion: latestSnapshot.rule_set_version, workflowVersion: latestSnapshot.workflow_version });
   } catch (error) {
     console.error("quotes/issue error:", error);
     return NextResponse.json(
