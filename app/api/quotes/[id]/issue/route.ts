@@ -21,6 +21,9 @@ function validateLines(lines: IssueLine[]): string[] {
   }
 
   const sections = new Set(lines.map((line) => line.section).filter((section) => section === "Roofing" || section === "Wall Cladding"));
+  if (sections.size === 0) {
+    errors.push("At least one Roofing or Wall Cladding section is required.");
+  }
   for (const section of sections) {
     const sectionLines = lines.filter((line) => line.section === section);
     const hasMaterial = sectionLines.some((line) => line.category === "Material");
