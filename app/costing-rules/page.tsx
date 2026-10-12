@@ -56,6 +56,7 @@ export default function CostingRulesPage() {
   const [draft, setDraft] = useState<RuleSet | null>(null);
   const [rules, setRules] = useState<CostingRule[]>([]);
   const [loading, setLoading] = useState(true);
+  const [canEdit, setCanEdit] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -68,6 +69,7 @@ export default function CostingRulesPage() {
         const response = await fetch("/api/costing/rules", { cache: "no-store" });
         const json = await readJson(response);
         if (!response.ok) throw new Error(json.error || "Unable to load costing rules.");
+        setCanEdit(json.canEdit === true);
         setPublished(json.published ?? null);
         setDraft(json.draft ?? null);
         setRules((json.draft ?? json.published)?.rules ?? []);
@@ -183,6 +185,7 @@ export default function CostingRulesPage() {
           </div>
         </section>
 
+        {!canEdit && !loading && <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Read-only: add your admin email to the COSTING_ADMIN_EMAILS environment variable to save and publish rule versions.</div>}
         {error && <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
         {notice && <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">{notice}</div>}
 
@@ -195,7 +198,7 @@ export default function CostingRulesPage() {
                 <h2 className="font-medium">Rule set editor</h2>
                 <p className="text-xs text-zinc-500">Markup values are entered as percentages; fees and rates are entered in NZ dollars.</p>
               </div>
-              <button type="button" onClick={addRule} className="rounded-md border border-zinc-300 px-3 py-2 text-sm hover:bg-zinc-50">Add rule</button>
+              <button type="button" onClick={addRule} disabled={!canEdit} className="rounded-md border border-zinc-300 px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-40">Add rule</button>
             </div>
 
             <div className="overflow-x-auto">
@@ -217,26 +220,26 @@ export default function CostingRulesPage() {
                     return (
                       <tr key={rule.id} className="border-t border-zinc-100">
                         <td className="px-4 py-2">
-                          <input aria-label="Rule name" value={rule.name} onChange={(e) => updateRule(index, { name: e.target.value })} className="w-full rounded border border-zinc-200 px-2 py-2" />
+                          <input aria-label="Rule name" value={rule.name} disabled={!canEdit} onChange={(e) => updateRule(index, { name: e.target.value })} className="w-full rounded border border-zinc-200 px-2 py-2" />
                         </td>
                         <td className="px-4 py-2">
-                          <select aria-label="Rule type" value={rule.ruleType} onChange={(e) => updateRule(index, { ruleType: e.target.value as RuleType, section: e.target.value === "material_markup" || e.target.value === "labour_markup" ? (rule.section ?? "Roofing") : null })} className="w-full rounded border border-zinc-200 px-2 py-2">
+                          <select aria-label="Rule type" value={rule.ruleType} disabled={!canEdit} onChange={(e) => updateRule(index, { ruleType: e.target.value as RuleType, section: e.target.value === "material_markup" || e.target.value === "labour_markup" ? (rule.section ?? "Roofing") : null })} className="w-full rounded border border-zinc-200 px-2 py-2">
                             {RULE_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
                           </select>
                         </td>
                         <td className="px-4 py-2">
-                          <select aria-label="Rule section" value={rule.section ?? ""} disabled={!isMarkup} onChange={(e) => updateRule(index, { section: e.target.value ? e.target.value as CostingRule["section"] : null })} className="w-full rounded border border-zinc-200 px-2 py-2 disabled:bg-zinc-100">
+                          <select aria-label="Rule section" value={rule.section ?? ""} disabled={!canEdit || !isMarkup} onChange={(e) => updateRule(index, { section: e.target.value ? e.target.value as CostingRule["section"] : null })} className="w-full rounded border border-zinc-200 px-2 py-2 disabled:bg-zinc-100">
                             <option value="">Global</option>
                             <option value="Roofing">Roofing</option>
                             <option value="Wall Cladding">Wall Cladding</option>
                           </select>
                         </td>
                         <td className="px-4 py-2">
-                          <input aria-label="Rule value" type="number" min="0" max={isMarkup ? 500 : undefined} step={isMarkup ? 0.5 : 0.01} value={isMarkup ? Number((rule.value * 100).toFixed(4)) : rule.value} onChange={(e) => updateRule(index, { value: (Number(e.target.value) || 0) / (isMarkup ? 100 : 1) })} className="w-28 rounded border border-zinc-200 px-2 py-2" />
+                          <input aria-label="Rule value" type="number" min="0" max={isMarkup ? 500 : undefined} step={isMarkup ? 0.5 : 0.01} value={isMarkup ? Number((rule.value * 100).toFixed(4)) : rule.value} disabled={!canEdit} onChange={(e) => updateRule(index, { value: (Number(e.target.value) || 0) / (isMarkup ? 100 : 1) })} className="w-28 rounded border border-zinc-200 px-2 py-2" />
                         </td>
                         <td className="px-4 py-2 text-xs text-zinc-500">{type?.unit ?? "NZD"}</td>
                         <td className="px-4 py-2">
-                          <button type="button" onClick={() => removeRule(index)} className="text-xs text-red-700 hover:underline">Remove</button>
+                          <button type="button" onClick={() => removeRule(index)} disabled={!canEdit} className="text-xs text-red-700 hover:underline disabled:opacity-40">Remove</button>
                         </td>
                       </tr>
                     );
@@ -247,7 +250,7 @@ export default function CostingRulesPage() {
             </div>
 
             <div className="flex flex-wrap justify-end gap-3 border-t border-zinc-200 bg-zinc-50 px-4 py-4">
-              <button type="button" onClick={onSaveDraft} disabled={saving || rules.length === 0} className="rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium disabled:opacity-50">
+              <button type="button" onClick={onSaveDraft} disabled={!canEdit || saving || rules.length === 0} className="rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium disabled:opacity-50">
                 {saving ? "Saving…" : "Save draft"}
               </button>
               <button type="button" onClick={onPublish} disabled={saving || rules.length === 0} className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
