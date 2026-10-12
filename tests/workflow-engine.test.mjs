@@ -105,6 +105,12 @@ test("invalid component quantity expressions create a blocker instead of silentl
   assert.deepEqual(result.components, []);
 });
 
+test("workflow validation protects fields mapped to the current costing form", () => {
+  const invalid = { ...definition, fields: definition.fields.filter((field) => field.id !== "roof.areaM2") };
+  const errors = validateWorkflowDefinition(invalid);
+  assert.ok(errors.some((error) => error.includes("Required core question is missing: roof.areaM2")));
+});
+
 test("workflow definition validation rejects duplicate IDs and empty select options", () => {
   const invalid = {
     ...definition,
