@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { calculateQuote } from "@/lib/costing/engine";
+import { evaluateWorkflow, validateWorkflowDefinition, type WorkflowAnswers, type WorkflowDefinition } from "@/lib/workflows/engine";
 import type {
   CatalogueSnapshot,
   QuoteInput,
@@ -247,11 +248,11 @@ export async function POST(request: Request) {
   }
 
   try {
-    const requestBody = (await request.json()) as QuoteInput & { quoteId?: unknown };
+    const requestBody = (await request.json()) as QuoteInput & { quoteId?: unknown; workflowAnswers?: unknown };
     if (!requestBody || typeof requestBody !== "object" || Array.isArray(requestBody)) {
       return NextResponse.json({ error: "Request body must be a quote input object" }, { status: 400 });
     }
-    const { quoteId: rawQuoteId, ...body } = requestBody;
+    const { quoteId: rawQuoteId, workflowAnswers: rawWorkflowAnswers, ...body } = requestBody;
     if (rawQuoteId != null && (typeof rawQuoteId !== "string" || !rawQuoteId.trim())) {
       return NextResponse.json({ error: "quoteId must be a non-empty string." }, { status: 400 });
     }
@@ -285,9 +286,45 @@ export async function POST(request: Request) {
       throw new Error("No published costing rule set exists. Publish a costing rule set before calculating quotes.");
     }
 
+    const { data: workflowRow, error: workflowError } = await supabaseAdmin
+      .from("quote_workflow_versions")
+      .select("id, workflow_key, name, version, definition")
+      .eq("workflow_key", "roofing-cladding")
+      .eq("status", "published")
+      .order("version", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (workflowError) {
+      throw new Error(`Unable to load published quote workflow. Apply the versioned workflow migration first: ${workflowError.message}`);
+    }
+    if (!workflowRow) {
+      throw new Error("No published quote workflow exists. Publish a workflow before calculating quotes.");
+    }
+    const workflowDefinition = workflowRow.definition as WorkflowDefinition;
+    const workflowDefinitionErrors = validateWorkflowDefinition(workflowDefinition);
+    if (workflowDefinitionErrors.length > 0) {
+      throw new Error(`The published workflow definition is invalid: ${workflowDefinitionErrors.join(" ")}`);
+    }
+
+    if (rawWorkflowAnswers != null && (
+      typeof rawWorkflowAnswers !== "object" || Array.isArray(rawWorkflowAnswers)
+    )) {
+      return NextResponse.json({ error: "workflowAnswers must be an object." }, { status: 400 });
+    }
+    const workflowAnswers = (rawWorkflowAnswers ?? {}) as WorkflowAnswers;
+    const workflowEvaluation = evaluateWorkflow(workflowDefinition, workflowAnswers);
     const pricingRules = parsePublishedRules(ruleSet.rules);
     const catalogue = await loadSnapshot(pricingRules);
     const result = calculateQuote(body as QuoteInput, catalogue);
+
+    const workflowBlockers = [
+      ...workflowEvaluation.missingRequiredFields.map((field) => `Required workflow question: ${field.label}.`),
+      ...workflowEvaluation.warnings,
+    ];
+    if (workflowBlockers.length > 0) {
+      result.warnings = [...new Set([...result.warnings, ...workflowBlockers])];
+      result.readyToIssue = false;
+    }
 
     let snapshotId: string | null = null;
     if (quoteId) {
@@ -297,10 +334,10 @@ export async function POST(request: Request) {
           quote_id: quoteId,
           rule_set_id: ruleSet.id,
           rule_set_version: ruleSet.version,
-          engine_version: "1",
-          input_snapshot: body,
+          engine_version: "1.1",
+          input_snapshot: { ...body, workflowAnswers },
           catalogue_snapshot: catalogue,
-          result_snapshot: result,
+          result_snapshot: { ...result, workflowEvaluation, workflowVersion: workflowRow.version },
           created_by: session.user.id,
         })
         .select("id")
@@ -313,6 +350,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       result,
+      workflowEvaluation,
       meta: {
         ratesLoaded: catalogue.materialRates.length,
         bandsLoaded: catalogue.flashingBands.length,
@@ -321,6 +359,9 @@ export async function POST(request: Request) {
         ruleSetId: ruleSet.id,
         ruleSetName: ruleSet.name,
         ruleSetVersion: ruleSet.version,
+        workflowId: workflowRow.id,
+        workflowName: workflowRow.name,
+        workflowVersion: workflowRow.version,
         snapshotId,
         profilesLoaded: catalogue.profiles.length,
         materialsLoaded: catalogue.materials.length,
