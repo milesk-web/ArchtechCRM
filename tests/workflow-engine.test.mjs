@@ -24,6 +24,10 @@ const definition = {
   fields: [
     { id: "includeRoof", label: "Include roofing", type: "boolean", defaultValue: true },
     { id: "roof.areaM2", label: "Roof area (m²)", type: "number", required: true, visibleWhen: { field: "includeRoof", operator: "equals", value: true } },
+    { id: "includeWall", label: "Include wall cladding", type: "boolean", defaultValue: false },
+    { id: "wall.areaM2", label: "Wall area (m²)", type: "number", required: true, visibleWhen: { field: "includeWall", operator: "equals", value: true } },
+    { id: "measureRequired", label: "Measure required", type: "boolean", defaultValue: false },
+    { id: "isSmallJob", label: "Small job", type: "boolean", defaultValue: false },
     { id: "includeUnderlay", label: "Include underlay", type: "boolean", defaultValue: false },
     { id: "underlay.type", label: "Underlay type", type: "select", requiredWhen: { field: "includeUnderlay", operator: "equals", value: true }, visibleWhen: { field: "includeUnderlay", operator: "equals", value: true }, options: [{ label: "Standard", value: "standard" }] },
   ],
@@ -51,7 +55,7 @@ test("defaults, conditional visibility, and required questions evaluate consiste
   const result = evaluateWorkflow(definition, { "roof.areaM2": 120 });
   assert.equal(result.answers.includeRoof, true);
   assert.equal(result.answers.includeUnderlay, false);
-  assert.deepEqual(result.visibleFields.map((field) => field.id), ["includeRoof", "roof.areaM2", "includeUnderlay"]);
+  assert.deepEqual(result.visibleFields.map((field) => field.id), ["includeRoof", "roof.areaM2", "includeWall", "measureRequired", "isSmallJob", "includeUnderlay"]);
   assert.deepEqual(result.missingRequiredFields, []);
   assert.equal(result.ready, true);
 });
