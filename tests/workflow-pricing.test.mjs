@@ -76,6 +76,17 @@ test("missing markup rule leaves component unpriced and blocks issuance", () => 
   assert.ok(result.warnings.some((warning) => warning.includes("no published material markup rule")));
 });
 
+test("unpriced generated work without an explicit mode blocks issuance", () => {
+  const result = applyWorkflowPricing(
+    baseResult(),
+    [{ id: "missing-mode", name: "Unpriced labour", category: "Labour", unit: "hour", quantity: 2, metadata: {} }],
+    catalogue,
+    1,
+  );
+  assert.equal(result.readyToIssue, false);
+  assert.ok(result.warnings.some((warning) => warning.includes("configure a price or mark the component")));
+});
+
 test("workflow pricing does not mutate the source calculation", () => {
   const source = baseResult();
   const originalLineCount = source.lines.length;
