@@ -106,6 +106,211 @@ async function readJson<T>(res: Response): Promise<T> {
   }
 }
 
+function SectionEditor({
+    title,
+    which,
+    form,
+    profileList,
+    enabled,
+    onEnabled,
+    optionsByProfile,
+    materials,
+    updateSection,
+    addFlashing,
+    updateFlashing,
+    removeFlashing,
+  }: {
+    title: string;
+    which: "roof" | "wall";
+    form: SectionForm;
+    profileList: Opt[];
+    enabled: boolean;
+    onEnabled: (v: boolean) => void;
+    optionsByProfile: Record<string, Opt[]>;
+    materials: Opt[];
+    updateSection: (which: "roof" | "wall", patch: Partial<SectionForm>) => void;
+    addFlashing: (which: "roof" | "wall") => void;
+    updateFlashing: (which: "roof" | "wall", id: string, updates: Partial<FlashingRow>) => void;
+    removeFlashing: (which: "roof" | "wall", id: string) => void;
+  }) {
+    const opts = optionsByProfile[form.profileId] ?? [];
+    return (
+      <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-medium">{title}</h2>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(e) => {
+                onEnabled(e.target.checked);
+              }}
+            />
+            Include
+          </label>
+        </div>
+        {!enabled ? (
+          <p className="text-sm text-zinc-500">Not included in this quote.</p>
+        ) : (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-zinc-600">
+                  Area (m²)
+                </label>
+                <input
+                  type="number"
+                  className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                  value={form.areaM2 || ""}
+                  onChange={(e) =>
+                    updateSection(which, {
+                      areaM2: Number(e.target.value) || 0,
+                    })
+                  }
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-zinc-600">
+                  Pitch (°)
+                </label>
+                <input
+                  type="number"
+                  className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                  value={form.pitchDegrees || ""}
+                  onChange={(e) =>
+                    updateSection(which, {
+                      pitchDegrees: Number(e.target.value) || 0,
+                    })
+                  }
+                />
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-zinc-600">
+                Profile
+              </label>
+              <select
+                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                value={form.profileId}
+                onChange={(e) =>
+                  updateSection(which, { profileId: e.target.value })
+                }
+              >
+                <option value="">Select…</option>
+                {profileList.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-zinc-600">
+                Gauge / width
+              </label>
+              <select
+                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                value={form.profileOptionId}
+                disabled={!form.profileId}
+                onChange={(e) =>
+                  updateSection(which, { profileOptionId: e.target.value })
+                }
+              >
+                <option value="">Select…</option>
+                {opts.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.value}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-zinc-600">
+                Material
+              </label>
+              <select
+                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                value={form.materialId}
+                onChange={(e) =>
+                  updateSection(which, { materialId: e.target.value })
+                }
+              >
+                <option value="">Select…</option>
+                {materials.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="border-t border-zinc-100 pt-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-sm font-medium">Flashings</span>
+                <button
+                  type="button"
+                  className="text-sm text-blue-600 hover:underline"
+                  onClick={() => addFlashing(which)}
+                >
+                  + Add
+                </button>
+              </div>
+              {form.flashings.length === 0 && (
+                <p className="text-xs text-zinc-500">None yet.</p>
+              )}
+              {form.flashings.map((f) => (
+                <div
+                  key={f.id}
+                  className="mb-2 grid grid-cols-4 gap-2 text-sm"
+                >
+                  <input
+                    placeholder="Name"
+                    className="rounded border border-zinc-300 px-2 py-1"
+                    value={f.name}
+                    onChange={(e) => {
+                      const name = e.target.value;
+                      updateFlashing(which, f.id, { name });
+                    }}
+                  />
+                  <input
+                    type="number"
+                    placeholder="Girth mm"
+                    className="rounded border border-zinc-300 px-2 py-1"
+                    value={f.girthMm || ""}
+                    onChange={(e) => {
+                      const girthMm = Number(e.target.value) || 0;
+                      updateFlashing(which, f.id, { girthMm });
+                    }}
+                  />
+                  <input
+                    type="number"
+                    placeholder="Length m"
+                    className="rounded border border-zinc-300 px-2 py-1"
+                    value={f.lengthM || ""}
+                    onChange={(e) => {
+                      const lengthM = Number(e.target.value) || 0;
+                      updateFlashing(which, f.id, { lengthM });
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="text-left text-xs text-red-600"
+                    onClick={() => {
+                      removeFlashing(which, f.id);
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+    );
+  }
+
+
 export default function QuotePage() {
   const params = useParams();
   const router = useRouter();
@@ -423,224 +628,6 @@ export default function QuotePage() {
     profiles.filter((p) => p.section === "Wall Cladding"),
   );
 
-  function SectionEditor({
-    title,
-    which,
-    form,
-    profileList,
-    enabled,
-    onEnabled,
-  }: {
-    title: string;
-    which: "roof" | "wall";
-    form: SectionForm;
-    profileList: Opt[];
-    enabled: boolean;
-    onEnabled: (v: boolean) => void;
-  }) {
-    const opts = optionsByProfile[form.profileId] ?? [];
-    return (
-      <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-medium">{title}</h2>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={enabled}
-              onChange={(e) => {
-                onEnabled(e.target.checked);
-                setEngineResult(null);
-              }}
-            />
-            Include
-          </label>
-        </div>
-        {!enabled ? (
-          <p className="text-sm text-zinc-500">Not included in this quote.</p>
-        ) : (
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-zinc-600">
-                  Area (m²)
-                </label>
-                <input
-                  type="number"
-                  className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
-                  value={form.areaM2 || ""}
-                  onChange={(e) =>
-                    updateSection(which, {
-                      areaM2: Number(e.target.value) || 0,
-                    })
-                  }
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-zinc-600">
-                  Pitch (°)
-                </label>
-                <input
-                  type="number"
-                  className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
-                  value={form.pitchDegrees || ""}
-                  onChange={(e) =>
-                    updateSection(which, {
-                      pitchDegrees: Number(e.target.value) || 0,
-                    })
-                  }
-                />
-              </div>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-zinc-600">
-                Profile
-              </label>
-              <select
-                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
-                value={form.profileId}
-                onChange={(e) =>
-                  updateSection(which, { profileId: e.target.value })
-                }
-              >
-                <option value="">Select…</option>
-                {profileList.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-zinc-600">
-                Gauge / width
-              </label>
-              <select
-                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
-                value={form.profileOptionId}
-                disabled={!form.profileId}
-                onChange={(e) =>
-                  updateSection(which, { profileOptionId: e.target.value })
-                }
-              >
-                <option value="">Select…</option>
-                {opts.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.value}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-zinc-600">
-                Material
-              </label>
-              <select
-                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
-                value={form.materialId}
-                onChange={(e) =>
-                  updateSection(which, { materialId: e.target.value })
-                }
-              >
-                <option value="">Select…</option>
-                {materials.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="border-t border-zinc-100 pt-3">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-sm font-medium">Flashings</span>
-                <button
-                  type="button"
-                  className="text-sm text-blue-600 hover:underline"
-                  onClick={() => addFlashing(which)}
-                >
-                  + Add
-                </button>
-              </div>
-              {form.flashings.length === 0 && (
-                <p className="text-xs text-zinc-500">None yet.</p>
-              )}
-              {form.flashings.map((f) => (
-                <div
-                  key={f.id}
-                  className="mb-2 grid grid-cols-4 gap-2 text-sm"
-                >
-                  <input
-                    placeholder="Name"
-                    className="rounded border border-zinc-300 px-2 py-1"
-                    value={f.name}
-                    onChange={(e) => {
-                      const name = e.target.value;
-                      const setter = which === "roof" ? setRoof : setWall;
-                      setter((c) => ({
-                        ...c,
-                        flashings: c.flashings.map((x) =>
-                          x.id === f.id ? { ...x, name } : x,
-                        ),
-                      }));
-                      setEngineResult(null);
-                    }}
-                  />
-                  <input
-                    type="number"
-                    placeholder="Girth mm"
-                    className="rounded border border-zinc-300 px-2 py-1"
-                    value={f.girthMm || ""}
-                    onChange={(e) => {
-                      const girthMm = Number(e.target.value) || 0;
-                      const setter = which === "roof" ? setRoof : setWall;
-                      setter((c) => ({
-                        ...c,
-                        flashings: c.flashings.map((x) =>
-                          x.id === f.id ? { ...x, girthMm } : x,
-                        ),
-                      }));
-                      setEngineResult(null);
-                    }}
-                  />
-                  <input
-                    type="number"
-                    placeholder="Length m"
-                    className="rounded border border-zinc-300 px-2 py-1"
-                    value={f.lengthM || ""}
-                    onChange={(e) => {
-                      const lengthM = Number(e.target.value) || 0;
-                      const setter = which === "roof" ? setRoof : setWall;
-                      setter((c) => ({
-                        ...c,
-                        flashings: c.flashings.map((x) =>
-                          x.id === f.id ? { ...x, lengthM } : x,
-                        ),
-                      }));
-                      setEngineResult(null);
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="text-left text-xs text-red-600"
-                    onClick={() => {
-                      const setter = which === "roof" ? setRoof : setWall;
-                      setter((c) => ({
-                        ...c,
-                        flashings: c.flashings.filter((x) => x.id !== f.id),
-                      }));
-                      setEngineResult(null);
-                    }}
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </section>
-    );
-  }
 
   if (loading) {
     return (
