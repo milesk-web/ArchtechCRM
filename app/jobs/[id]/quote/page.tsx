@@ -800,10 +800,10 @@ export default function QuotePage() {
             {workflowEvaluation && workflowEvaluation.components.length > 0 && (
               <details className="mt-4 border-t border-zinc-100 pt-3">
                 <summary className="cursor-pointer text-sm font-medium text-zinc-700">Workflow-generated work preview ({workflowEvaluation.components.length})</summary>
-                <p className="mt-2 text-xs text-zinc-500">Preview only: current quote line pricing is still produced by the roofing/cladding costing engine.</p>
+                <p className="mt-2 text-xs text-zinc-500">Priced components are included in quote totals. Components marked costing_engine use the existing roof/wall pricing; informational components are preview-only.</p>
                 <ul className="mt-2 space-y-1 text-sm text-zinc-600">
                   {workflowEvaluation.components.map((component) => (
-                    <li key={component.id}>{component.name}: {component.quantity} {component.unit}</li>
+                    <li key={component.id}>{component.name}: {component.quantity} {component.unit} <span className="text-xs text-zinc-400">{component.pricing ? "· configured price" : component.pricingMode === "costing_engine" ? "· priced by costing engine" : "· informational only"}</span></li>
                   ))}
                 </ul>
               </details>
