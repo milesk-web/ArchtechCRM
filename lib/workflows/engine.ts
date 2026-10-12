@@ -47,7 +47,7 @@ export type WorkflowComponentPricingMode = "costing_engine" | "informational";
 export type WorkflowComponentPricing = {
   unitCost: number;
   markupRuleType?: "material_markup" | "labour_markup" | "none";
-  section?: "Roofing" | "Wall Cladding" | "Accessories" | "Fees";
+  section: "Roofing" | "Wall Cladding" | "Accessories" | "Fees";
 };
 
 export type WorkflowComponentDefinition = {
