@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   addCommonFlashing,
   addPricingDimension,
@@ -288,7 +289,7 @@ export default function PricingPage() {
   return (
     <div className="min-h-screen bg-[#f4f4f1] text-[#242422]">
       <header className="border-b border-black/[0.08] bg-[#fafaf8]">
-        <div className="mx-auto max-w-[1180px] px-5 py-6 md:px-9">
+        <div className="mx-auto flex max-w-[1180px] items-center justify-between gap-4 px-5 py-6 md:px-9">
           <div className="text-[10px] uppercase tracking-[0.17em] text-black/30">
             Archtech
           </div>
@@ -301,6 +302,9 @@ export default function PricingPage() {
             Configure the product and pricing structure used by
             quoting.
           </p>
+          <Link href="/costing-rules" className="shrink-0 rounded-md border border-black/15 px-4 py-2 text-[10px] uppercase tracking-[0.1em] text-black/60 hover:bg-black/[0.03]">
+            Costing rules & versions
+          </Link>
         </div>
       </header>
 
