@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { getJob, updateJob, type Job } from "@/lib/jobs";
+import { getJob, type Job } from "@/lib/jobs";
 import {
   getQuoteForJob,
   createQuote,
