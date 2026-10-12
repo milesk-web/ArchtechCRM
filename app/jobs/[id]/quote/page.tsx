@@ -24,6 +24,7 @@ type Opt = { id: string; name?: string; value?: string; section?: string };
 type CatalogueListResponse = { data?: Opt[]; error?: string };
 type CalculationApiResponse = {
   result: QuoteResult;
+  error?: string;
   meta?: { ruleSetVersion?: number; workflowVersion?: number };
 };
 type WorkflowLoadResponse = { published?: { definition: WorkflowDefinition; version: number }; error?: string };
