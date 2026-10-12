@@ -12,6 +12,9 @@ type IssueLine = {
   quantity: number | string | null;
   unit_cost: number | string | null;
   sell_price: number | string | null;
+  unit: string;
+  sort_order: number | string;
+  metadata: Record<string, unknown> | null;
 };
 
 function validateLines(lines: IssueLine[]): string[] {
@@ -55,6 +58,65 @@ function validateLines(lines: IssueLine[]): string[] {
   return errors;
 }
 
+type SnapshotLine = {
+  id?: string;
+  section: string;
+  category: string;
+  description: string;
+  quantity: number;
+  unit: string;
+  unitCost: number | null;
+  sellPrice: number | null;
+  sortOrder: number;
+  metadata?: Record<string, unknown>;
+};
+
+function validateSnapshotMatch(snapshot: unknown, lines: IssueLine[]): string[] {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    return ["Calculate and save the quote again before issuing it."];
+  }
+
+  const result = snapshot as Record<string, unknown>;
+  if (result.readyToIssue !== true) {
+    const warnings = Array.isArray(result.warnings)
+      ? result.warnings.filter((warning): warning is string => typeof warning === "string")
+      : [];
+    return [
+      "The latest calculation is not marked ready to issue.",
+      ...warnings,
+    ];
+  }
+
+  if (!Array.isArray(result.lines) || result.lines.length !== lines.length) {
+    return ["The saved quote lines do not match the latest calculation. Recalculate and save again."];
+  }
+
+  const snapshotLines = result.lines as SnapshotLine[];
+  const errors: string[] = [];
+  for (const line of lines) {
+    const expected = snapshotLines.find((candidate) => candidate.id === line.id);
+    if (!expected) {
+      errors.push(`Line "${line.description ?? line.id}" is not part of the latest calculation.`);
+      continue;
+    }
+    const matches =
+      expected.section === line.section &&
+      expected.category === line.category &&
+      expected.description === line.description &&
+      Number(expected.quantity) === Number(line.quantity) &&
+      expected.unit === line.unit &&
+      Number(expected.unitCost) === Number(line.unit_cost) &&
+      Number(expected.sellPrice) === Number(line.sell_price) &&
+      Number(expected.sortOrder) === Number(line.sort_order) &&
+      JSON.stringify(expected.metadata ?? {}) === JSON.stringify(line.metadata ?? {});
+    if (!matches) {
+      errors.push(`Line "${line.description ?? line.id}" differs from the latest calculation. Recalculate and save again.`);
+    }
+  }
+
+  return errors;
+}
+
 export async function POST(request: Request, context: RouteContext) {
   const session = await getSession(request);
   if (!session?.user?.id) {
@@ -88,19 +150,49 @@ export async function POST(request: Request, context: RouteContext) {
 
     const { data: lines, error: linesError } = await supabaseAdmin
       .from("quote_lines")
-      .select("id, section, category, description, quantity, unit_cost, sell_price")
+      .select("id, section, category, description, quantity, unit, unit_cost, sell_price, sort_order, metadata")
       .eq("quote_id", id);
 
     if (linesError) {
       throw new Error(`Unable to validate quote lines: ${linesError.message}`);
     }
 
-    const validationErrors = validateLines((lines ?? []) as IssueLine[]);
+    const typedLines = (lines ?? []) as IssueLine[];
+    const validationErrors = validateLines(typedLines);
     if (validationErrors.length > 0) {
       return NextResponse.json(
         {
           error: "This quote cannot be issued until all lines are fully priced.",
           details: validationErrors,
+        },
+        { status: 422 },
+      );
+    }
+
+    const { data: latestSnapshot, error: snapshotError } = await supabaseAdmin
+      .from("quote_calculation_snapshots")
+      .select("id, rule_set_version, result_snapshot")
+      .eq("quote_id", id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (snapshotError) {
+      throw new Error(`Unable to validate calculation snapshot: ${snapshotError.message}`);
+    }
+    if (!latestSnapshot) {
+      return NextResponse.json(
+        { error: "Calculate and save this quote before issuing it." },
+        { status: 422 },
+      );
+    }
+
+    const snapshotErrors = validateSnapshotMatch(latestSnapshot.result_snapshot, typedLines);
+    if (snapshotErrors.length > 0) {
+      return NextResponse.json(
+        {
+          error: "The saved quote does not match a complete, ready-to-issue calculation.",
+          details: snapshotErrors,
         },
         { status: 422 },
       );
@@ -155,7 +247,7 @@ export async function POST(request: Request, context: RouteContext) {
       jobStatus = "Quoted";
     }
 
-    return NextResponse.json({ success: true, quoteId: id, status: "Issued", jobStatus });
+    return NextResponse.json({ success: true, quoteId: id, status: "Issued", jobStatus, calculationSnapshotId: latestSnapshot.id, ruleSetVersion: latestSnapshot.rule_set_version });
   } catch (error) {
     console.error("quotes/issue error:", error);
     return NextResponse.json(
