@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { getJob, updateJob, type Job } from "@/lib/jobs";
+import { getJob, type Job } from "@/lib/jobs";
 import {
   getQuoteForJob,
   createQuote,
@@ -52,6 +52,39 @@ function money(n: number | null | undefined) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+}
+
+function sameSavedCalculation(
+  resultLines: Array<{
+    id?: string;
+    section: string;
+    category: string;
+    description: string;
+    quantity: number;
+    unit: string;
+    unitCost: number | null;
+    sellPrice: number | null;
+    sortOrder: number;
+    metadata?: Record<string, unknown>;
+  }>,
+  savedLines: QuoteLine[],
+): boolean {
+  if (resultLines.length === 0 || resultLines.length !== savedLines.length) return false;
+  return resultLines.every((line) => {
+    const saved = savedLines.find((candidate) => candidate.id === line.id);
+    return Boolean(
+      saved &&
+      saved.section === line.section &&
+      saved.category === line.category &&
+      saved.description === line.description &&
+      saved.quantity === line.quantity &&
+      saved.unit === line.unit &&
+      saved.unitCost === line.unitCost &&
+      saved.sellPrice === line.sellPrice &&
+      saved.sortOrder === line.sortOrder &&
+      JSON.stringify(saved.metadata ?? {}) === JSON.stringify(line.metadata ?? {}),
+    );
+  });
 }
 
 async function readJson(res: Response) {
@@ -282,32 +315,47 @@ export default function QuotePage() {
       setSavedLines(saved);
 
       const sellTotal = engineResult.result?.sell?.total;
-      try {
-        if (readyToIssue && job && job.status === "Opportunity") {
-          const today = new Date().toISOString().slice(0, 10);
-          await updateJob(job.id, {
-            status: "Quoted",
-            quoted_date: today,
-          });
-          setJob({
-            ...job,
-            status: "Quoted",
-            dates: { ...job.dates, quoted: today },
-          });
-        }
-      } catch {
-        // Non-fatal — lines already saved
-      }
-
       const totalLabel =
         sellTotal != null ? ` · sell ${money(sellTotal)}` : "";
       setStatus(
         readyToIssue
-          ? `Saved ${saved.length} priced line(s)${totalLabel}. The quote is ready for review.`
+          ? `Saved ${saved.length} priced line(s)${totalLabel}. Review the quote, then use Issue quote when it is ready to send.`
           : `Saved ${saved.length} line(s) as a draft${totalLabel}. The job has not been marked Quoted because pricing is incomplete; resolve the notes below and recalculate.`,
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function runIssue() {
+    if (!quote || !engineResult?.result?.readyToIssue || !sameSavedCalculation(engineResult.result.lines, savedLines)) {
+      setError("Save the current fully priced calculation before issuing this quote.");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    setStatus("");
+    try {
+      const response = await fetch(`/api/quotes/${encodeURIComponent(quote.id)}/issue`, {
+        method: "POST",
+      });
+      const json = await readJson(response);
+      if (!response.ok) {
+        const details = Array.isArray(json.details) ? ` ${json.details.join(" ")}` : "";
+        throw new Error((json.error || "Unable to issue quote.") + details);
+      }
+
+      setQuote({ ...quote, status: "Issued" });
+      if (job && json.jobStatus === "Quoted" && job.status === "Opportunity") {
+        const today = new Date().toISOString().slice(0, 10);
+        setJob({ ...job, status: "Quoted", dates: { ...job.dates, quoted: today } });
+      }
+      setStatus("Quote issued successfully. The issue status was confirmed by the server.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to issue quote.");
     } finally {
       setSaving(false);
     }
@@ -558,6 +606,7 @@ export default function QuotePage() {
   }
 
   const result = engineResult?.result;
+  const currentCalculationSaved = Boolean(result?.readyToIssue && sameSavedCalculation(result.lines, savedLines));
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
@@ -645,6 +694,17 @@ export default function QuotePage() {
             >
               {saving ? "Saving…" : result?.readyToIssue ? "Save quote" : "Save draft"}
             </button>
+            {result?.readyToIssue && quote?.status === "Draft" && (
+              <button
+                type="button"
+                onClick={runIssue}
+                disabled={saving || !currentCalculationSaved}
+                title={!currentCalculationSaved ? "Save this exact calculation before issuing." : "Issue the saved quote"}
+                className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {saving ? "Working…" : "Issue quote"}
+              </button>
+            )}
           </div>
 
           {error && (
