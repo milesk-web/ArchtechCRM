@@ -45,7 +45,7 @@ test("workflow-priced material, labour, and fee components reconcile totals", ()
     { id: "safety-rail", name: "Safety rail", category: "Accessory", unit: "each", quantity: 2, metadata: {}, pricing: { unitCost: 50, markupRuleType: "material_markup", section: "Roofing" } },
     { id: "extra-labour", name: "Extra installation", category: "Labour", unit: "hour", quantity: 3, metadata: {}, pricing: { unitCost: 40, markupRuleType: "labour_markup", section: "Wall Cladding" } },
     { id: "travel-fee", name: "Travel fee", category: "Fee", unit: "km", quantity: 10, metadata: {}, pricing: { unitCost: 2, markupRuleType: "none", section: "Fees" } },
-    { id: "preview-only", name: "Unpriced preview", category: "Material", unit: "m²", quantity: 4, metadata: {} },
+    { id: "preview-only", name: "Unpriced preview", category: "Material", unit: "m²", quantity: 4, metadata: {}, pricingMode: "informational" },
   ];
 
   const result = applyWorkflowPricing(baseResult(), components, catalogue, 3);
