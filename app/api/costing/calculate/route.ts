@@ -27,15 +27,56 @@ import type {
 
 export const dynamic = "force-dynamic";
 
-const DEFAULT_PRICING_RULES: PricingRule[] = [
-  { id: "def-mr", name: "Roof material markup", section: "Roofing", ruleType: "material_markup", value: 0.15 },
-  { id: "def-lr", name: "Roof labour markup", section: "Roofing", ruleType: "labour_markup", value: 0.15 },
-  { id: "def-mw", name: "Wall material markup", section: "Wall Cladding", ruleType: "material_markup", value: 0.3 },
-  { id: "def-lw", name: "Wall labour markup", section: "Wall Cladding", ruleType: "labour_markup", value: 0.3 },
-  { id: "def-sj", name: "Small job fee", section: null, ruleType: "small_job_fee", value: 350 },
-  { id: "def-me", name: "Measure fee", section: null, ruleType: "measure_fee", value: 1500 },
-  { id: "def-dk", name: "Distance per km", section: null, ruleType: "distance_rate_per_km", value: 1.5 },
-];
+const ALLOWED_RULE_TYPES = new Set<PricingRule["ruleType"]>([
+  "material_markup",
+  "labour_markup",
+  "small_job_fee",
+  "measure_fee",
+  "travel_rate_per_hour",
+  "distance_rate_per_km",
+  "meal_allowance",
+  "accommodation_per_week",
+]);
+
+function parsePublishedRules(value: unknown): PricingRule[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error("The published costing rule set is empty or invalid.");
+  }
+
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object") {
+      throw new Error(`Published costing rule ${index + 1} is invalid.`);
+    }
+    const rule = item as Record<string, unknown>;
+    const section = rule.section;
+    if (
+      typeof rule.id !== "string" ||
+      typeof rule.name !== "string" ||
+      (section !== null && section !== "Roofing" && section !== "Wall Cladding") ||
+      typeof rule.ruleType !== "string" ||
+      !ALLOWED_RULE_TYPES.has(rule.ruleType as PricingRule["ruleType"]) ||
+      typeof rule.value !== "number" ||
+      !Number.isFinite(rule.value) ||
+      rule.value < 0
+    ) {
+      throw new Error(`Published costing rule ${index + 1} has invalid fields.`);
+    }
+    if (
+      (rule.ruleType === "material_markup" || rule.ruleType === "labour_markup") &&
+      rule.value > 5
+    ) {
+      throw new Error(`Published markup rule "${rule.name}" exceeds the 500% safety limit.`);
+    }
+    return {
+      id: rule.id,
+      name: rule.name,
+      section: section as PricingRule["section"],
+      ruleType: rule.ruleType as PricingRule["ruleType"],
+      value: rule.value,
+    };
+  });
+}
+
 
 async function safeSelect(table: string) {
   const { data, error } = await supabaseAdmin.from(table).select("*").eq("active", true);
@@ -45,7 +86,7 @@ async function safeSelect(table: string) {
   return data ?? [];
 }
 
-async function loadSnapshot(): Promise<CatalogueSnapshot> {
+async function loadSnapshot(pricingRules: PricingRule[]): Promise<CatalogueSnapshot> {
   const [
     profiles,
     profileOptions,
@@ -195,8 +236,7 @@ async function loadSnapshot(): Promise<CatalogueSnapshot> {
         sortOrder: r.sort_order ?? 0,
       }),
     ),
-    // Existing pricing_rules table has a different schema — use defaults
-    pricingRules: DEFAULT_PRICING_RULES,
+    pricingRules,
   };
 }
 
@@ -207,12 +247,69 @@ export async function POST(request: Request) {
   }
 
   try {
-    const body = (await request.json()) as QuoteInput;
-    if (!body || typeof body !== "object" || Array.isArray(body)) {
+    const requestBody = (await request.json()) as QuoteInput & { quoteId?: unknown };
+    if (!requestBody || typeof requestBody !== "object" || Array.isArray(requestBody)) {
       return NextResponse.json({ error: "Request body must be a quote input object" }, { status: 400 });
     }
-    const catalogue = await loadSnapshot();
-    const result = calculateQuote(body, catalogue);
+    const { quoteId: rawQuoteId, ...body } = requestBody;
+    if (rawQuoteId != null && (typeof rawQuoteId !== "string" || !rawQuoteId.trim())) {
+      return NextResponse.json({ error: "quoteId must be a non-empty string." }, { status: 400 });
+    }
+
+    let quoteId: string | null = null;
+    if (typeof rawQuoteId === "string") {
+      quoteId = rawQuoteId;
+      const { data: quote, error: quoteError } = await supabaseAdmin
+        .from("quotes")
+        .select("id, status")
+        .eq("id", quoteId)
+        .maybeSingle();
+      if (quoteError) throw new Error(`Unable to verify quote: ${quoteError.message}`);
+      if (!quote) return NextResponse.json({ error: "Quote not found." }, { status: 404 });
+      if (quote.status !== "Draft") {
+        return NextResponse.json({ error: "Only draft quotes can be recalculated." }, { status: 409 });
+      }
+    }
+
+    const { data: ruleSet, error: ruleSetError } = await supabaseAdmin
+      .from("costing_rule_sets")
+      .select("id, name, version, rules")
+      .eq("status", "published")
+      .order("version", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (ruleSetError) {
+      throw new Error(`Unable to load published costing rules. Apply the versioned costing migration first: ${ruleSetError.message}`);
+    }
+    if (!ruleSet) {
+      throw new Error("No published costing rule set exists. Publish a costing rule set before calculating quotes.");
+    }
+
+    const pricingRules = parsePublishedRules(ruleSet.rules);
+    const catalogue = await loadSnapshot(pricingRules);
+    const result = calculateQuote(body as QuoteInput, catalogue);
+
+    let snapshotId: string | null = null;
+    if (quoteId) {
+      const { data: snapshot, error: snapshotError } = await supabaseAdmin
+        .from("quote_calculation_snapshots")
+        .insert({
+          quote_id: quoteId,
+          rule_set_id: ruleSet.id,
+          rule_set_version: ruleSet.version,
+          engine_version: "1",
+          input_snapshot: body,
+          catalogue_snapshot: catalogue,
+          result_snapshot: result,
+          created_by: session.user.id,
+        })
+        .select("id")
+        .single();
+      if (snapshotError) {
+        throw new Error(`Unable to preserve calculation snapshot. Apply the versioned costing migration first: ${snapshotError.message}`);
+      }
+      snapshotId = snapshot.id;
+    }
 
     return NextResponse.json({
       result,
@@ -221,6 +318,10 @@ export async function POST(request: Request) {
         bandsLoaded: catalogue.flashingBands.length,
         labourRatesLoaded: catalogue.labourRates.length,
         rulesLoaded: catalogue.pricingRules.length,
+        ruleSetId: ruleSet.id,
+        ruleSetName: ruleSet.name,
+        ruleSetVersion: ruleSet.version,
+        snapshotId,
         profilesLoaded: catalogue.profiles.length,
         materialsLoaded: catalogue.materials.length,
       },
