@@ -7,7 +7,7 @@ on:
       - main
 
 jobs:
-  costing-regression-tests:
+  test-build:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -19,5 +19,14 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
-      - name: Run costing regression tests
+      - name: Run costing and workflow regression tests
         run: npm test
+      - name: Build Next.js application
+        run: npm run build
+        env:
+          AUTH_SECRET: ci-only-auth-secret-with-at-least-thirty-two-characters
+          COSTING_SEED_SECRET: ci-only-seed-secret
+          COSTING_ADMIN_EMAILS: admin@example.com
+          NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-only-anon-key
+          SUPABASE_SERVICE_ROLE_KEY: ci-only-service-role-key
