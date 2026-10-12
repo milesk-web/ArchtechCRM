@@ -26,7 +26,11 @@ export function applyWorkflowPricing(
 
   for (const component of components) {
     const pricing = component.pricing;
-    if (!pricing) continue;
+    if (!pricing) {
+      if (component.pricingMode === "costing_engine" || component.pricingMode === "informational") continue;
+      result.warnings.push(`${component.name}: configure a price or mark the component as costing_engine/informational.`);
+      continue;
+    }
 
     const section = pricing.section;
     const ruleType = pricing.markupRuleType ?? "none";
