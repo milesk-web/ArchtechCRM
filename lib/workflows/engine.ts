@@ -42,6 +42,8 @@ export type QuantityFormula =
   | { kind: "constant"; value: number }
   | { kind: "field"; field: string; multiplier?: number; add?: number };
 
+export type WorkflowComponentPricingMode = "costing_engine" | "informational";
+
 export type WorkflowComponentPricing = {
   unitCost: number;
   markupRuleType?: "material_markup" | "labour_markup" | "none";
@@ -57,6 +59,7 @@ export type WorkflowComponentDefinition = {
   when?: WorkflowCondition;
   metadata?: Record<string, unknown>;
   pricing?: WorkflowComponentPricing;
+  pricingMode?: WorkflowComponentPricingMode;
 };
 
 export type WorkflowDefinition = {
@@ -75,6 +78,7 @@ export type GeneratedWorkComponent = {
   quantity: number;
   metadata: Record<string, unknown>;
   pricing?: WorkflowComponentPricing;
+  pricingMode?: WorkflowComponentPricingMode;
 };
 
 export type WorkflowEvaluation = {
@@ -226,6 +230,7 @@ export function evaluateWorkflow(
       quantity,
       metadata: { ...(component.metadata ?? {}) },
       ...(component.pricing ? { pricing: { ...component.pricing } } : {}),
+      ...(component.pricingMode ? { pricingMode: component.pricingMode } : {}),
     });
   }
 
@@ -381,6 +386,15 @@ export function validateWorkflowDefinition(value: unknown): string[] {
     const validCategories = ["Material", "Flashing", "Labour", "Underlay", "Accessory", "Fee"];
     if (!validCategories.includes(component.category)) {
       errors.push(`Component "${component.name}" has an unsupported costing category.`);
+    }
+    if (component.pricingMode !== undefined && !["costing_engine", "informational"].includes(component.pricingMode)) {
+      errors.push(`Component "${component.name}" has an unsupported pricingMode.`);
+    }
+    if (component.pricing !== undefined && component.pricingMode !== undefined) {
+      errors.push(`Component "${component.name}" must use pricing or pricingMode, not both.`);
+    }
+    if (component.pricing === undefined && component.pricingMode === undefined) {
+      errors.push(`Component "${component.name}" must configure pricing or declare pricingMode as costing_engine or informational.`);
     }
     if (component.pricing !== undefined) {
       const pricing = component.pricing as WorkflowComponentPricing;
