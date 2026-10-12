@@ -14,6 +14,14 @@ const RULE_TYPES = new Set([
 ]);
 const SECTIONS = new Set(["Roofing", "Wall Cladding"]);
 
+function isCostingAdmin(email: string | undefined): boolean {
+  const allowed = (process.env.COSTING_ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  return Boolean(email && allowed.includes(email.trim().toLowerCase()));
+}
+
 type Rule = {
   id: string;
   name: string;
@@ -94,6 +102,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const canEdit = isCostingAdmin(session.user.email);
   try {
     const [publishedResult, draftResult] = await Promise.all([
       supabaseAdmin
@@ -103,13 +112,15 @@ export async function GET(request: Request) {
         .order("version", { ascending: false })
         .limit(1)
         .maybeSingle(),
-      supabaseAdmin
-        .from("costing_rule_sets")
-        .select("id, name, version, status, rules, published_at, created_at")
-        .eq("status", "draft")
-        .order("version", { ascending: false })
-        .limit(1)
-        .maybeSingle(),
+      canEdit
+        ? supabaseAdmin
+            .from("costing_rule_sets")
+            .select("id, name, version, status, rules, published_at, created_at")
+            .eq("status", "draft")
+            .order("version", { ascending: false })
+            .limit(1)
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
     ]);
 
     if (publishedResult.error || draftResult.error) {
@@ -121,6 +132,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       published: publishedResult.data,
       draft: draftResult.data,
+      canEdit,
     });
   } catch (error) {
     console.error("costing/rules GET error:", error);
@@ -135,6 +147,12 @@ export async function POST(request: Request) {
   const session = await getSession(request);
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!isCostingAdmin(session.user.email)) {
+    return NextResponse.json(
+      { error: "Costing rule changes require an authorised email in the COSTING_ADMIN_EMAILS environment variable." },
+      { status: 403 },
+    );
   }
 
   try {
