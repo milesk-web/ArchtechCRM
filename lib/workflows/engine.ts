@@ -230,11 +230,65 @@ export function evaluateWorkflow(
   };
 }
 
-export function validateWorkflowDefinition(definition: WorkflowDefinition): string[] {
+const CONDITION_OPERATORS = new Set<ConditionOperator>([
+  "equals",
+  "not_equals",
+  "greater_than",
+  "greater_than_or_equal",
+  "less_than",
+  "less_than_or_equal",
+  "contains",
+  "is_set",
+  "is_not_set",
+]);
+
+function validateCondition(value: unknown, path: string, errors: string[]): void {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    errors.push(`${path} must be a condition object.`);
+    return;
+  }
+  const condition = value as Record<string, unknown>;
+  if ("all" in condition) {
+    if (!Array.isArray(condition.all)) errors.push(`${path}.all must be an array.`);
+    else condition.all.forEach((item, index) => validateCondition(item, `${path}.all[${index}]`, errors));
+    return;
+  }
+  if ("any" in condition) {
+    if (!Array.isArray(condition.any)) errors.push(`${path}.any must be an array.`);
+    else condition.any.forEach((item, index) => validateCondition(item, `${path}.any[${index}]`, errors));
+    return;
+  }
+  if ("not" in condition) {
+    validateCondition(condition.not, `${path}.not`, errors);
+    return;
+  }
+  if (typeof condition.field !== "string" || !condition.field.trim()) {
+    errors.push(`${path}.field is required.`);
+  }
+  if (typeof condition.operator !== "string" || !CONDITION_OPERATORS.has(condition.operator as ConditionOperator)) {
+    errors.push(`${path}.operator is unsupported.`);
+  } else if (
+    !["is_set", "is_not_set"].includes(condition.operator) &&
+    !Object.prototype.hasOwnProperty.call(condition, "value")
+  ) {
+    errors.push(`${path}.value is required for this operator.`);
+  }
+}
+
+export function validateWorkflowDefinition(value: unknown): string[] {
   const errors: string[] = [];
-  if (!definition.key.trim()) errors.push("Workflow key is required.");
-  if (!definition.name.trim()) errors.push("Workflow name is required.");
-  if (!Number.isInteger(definition.version) || definition.version < 1) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return ["Workflow definition must be an object."];
+  }
+
+  const definition = value as Partial<WorkflowDefinition>;
+  if (typeof definition.key !== "string" || !/^[a-z0-9-]+$/.test(definition.key)) {
+    errors.push("Workflow key must use lowercase letters, numbers, and hyphens.");
+  }
+  if (typeof definition.name !== "string" || !definition.name.trim()) {
+    errors.push("Workflow name is required.");
+  }
+  if (!Number.isInteger(definition.version) || (definition.version ?? 0) < 1) {
     errors.push("Workflow version must be a positive integer.");
   }
   if (!Array.isArray(definition.fields) || definition.fields.length === 0) {
@@ -245,24 +299,77 @@ export function validateWorkflowDefinition(definition: WorkflowDefinition): stri
   }
 
   const fieldIds = new Set<string>();
-  for (const field of definition.fields ?? []) {
-    if (!field.id.trim() || !field.label.trim()) {
+  for (const [index, rawField] of (Array.isArray(definition.fields) ? definition.fields : []).entries()) {
+    if (!rawField || typeof rawField !== "object") {
+      errors.push(`Question ${index + 1} is invalid.`);
+      continue;
+    }
+    const field = rawField as WorkflowField;
+    if (typeof field.id !== "string" || !field.id.trim() || typeof field.label !== "string" || !field.label.trim()) {
       errors.push("Every workflow question needs an ID and label.");
+      continue;
     }
     if (fieldIds.has(field.id)) errors.push(`Duplicate workflow question ID: ${field.id}.`);
     fieldIds.add(field.id);
-    if (field.type === "select" && (!field.options || field.options.length === 0)) {
-      errors.push(`Select question "${field.label}" must define at least one option.`);
+    if (!["text", "number", "boolean", "select", "multiselect"].includes(field.type)) {
+      errors.push(`Question "${field.label}" has an unsupported type.`);
     }
+    if (field.type === "select" || field.type === "multiselect") {
+      if (!Array.isArray(field.options) || field.options.length === 0) {
+        errors.push(`Question "${field.label}" must define at least one option.`);
+      } else {
+        const optionValues = new Set<string>();
+        for (const option of field.options) {
+          if (!option || typeof option.label !== "string" || typeof option.value !== "string") {
+            errors.push(`Question "${field.label}" has an invalid option.`);
+            continue;
+          }
+          if (optionValues.has(option.value)) errors.push(`Question "${field.label}" has duplicate option value "${option.value}".`);
+          optionValues.add(option.value);
+        }
+      }
+    }
+    if (field.visibleWhen !== undefined) validateCondition(field.visibleWhen, `Question "${field.label}" visibility`, errors);
+    if (field.requiredWhen !== undefined) validateCondition(field.requiredWhen, `Question "${field.label}" requiredness`, errors);
   }
 
   const componentIds = new Set<string>();
-  for (const component of definition.components ?? []) {
-    if (!component.id.trim() || !component.name.trim() || !component.unit.trim()) {
-      errors.push("Every generated work component needs an ID, name, and unit.");
+  for (const [index, rawComponent] of (Array.isArray(definition.components) ? definition.components : []).entries()) {
+    if (!rawComponent || typeof rawComponent !== "object") {
+      errors.push(`Generated work component ${index + 1} is invalid.`);
+      continue;
+    }
+    const component = rawComponent as WorkflowComponentDefinition;
+    if (
+      typeof component.id !== "string" || !component.id.trim() ||
+      typeof component.name !== "string" || !component.name.trim() ||
+      typeof component.category !== "string" || !component.category.trim() ||
+      typeof component.unit !== "string" || !component.unit.trim()
+    ) {
+      errors.push("Every generated work component needs an ID, name, category, and unit.");
+      continue;
     }
     if (componentIds.has(component.id)) errors.push(`Duplicate work component ID: ${component.id}.`);
     componentIds.add(component.id);
+
+    if (!component.quantity || typeof component.quantity !== "object") {
+      errors.push(`Component "${component.name}" needs a quantity formula.`);
+    } else if (component.quantity.kind === "constant") {
+      if (!Number.isFinite(component.quantity.value)) errors.push(`Component "${component.name}" has an invalid constant quantity.`);
+    } else if (component.quantity.kind === "field") {
+      if (typeof component.quantity.field !== "string" || !component.quantity.field.trim()) {
+        errors.push(`Component "${component.name}" must reference a quantity field.`);
+      }
+      if (component.quantity.multiplier !== undefined && !Number.isFinite(component.quantity.multiplier)) {
+        errors.push(`Component "${component.name}" has an invalid quantity multiplier.`);
+      }
+      if (component.quantity.add !== undefined && !Number.isFinite(component.quantity.add)) {
+        errors.push(`Component "${component.name}" has an invalid quantity addend.`);
+      }
+    } else {
+      errors.push(`Component "${component.name}" uses an unsupported quantity formula.`);
+    }
+    if (component.when !== undefined) validateCondition(component.when, `Component "${component.name}" condition`, errors);
   }
 
   return errors;
