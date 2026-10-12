@@ -56,6 +56,16 @@ test("defaults, conditional visibility, and required questions evaluate consiste
   assert.equal(result.ready, true);
 });
 
+test("optional visible questions do not become required by default", () => {
+  const optional = {
+    ...definition,
+    fields: [...definition.fields, { id: "notes", label: "Optional notes", type: "text" }],
+  };
+  const result = evaluateWorkflow(optional, { "roof.areaM2": 120 });
+  assert.equal(result.ready, true);
+  assert.equal(result.missingRequiredFields.some((field) => field.id === "notes"), false);
+});
+
 test("conditional required questions block incomplete workflows", () => {
   const result = evaluateWorkflow(definition, {
     "roof.areaM2": 120,
