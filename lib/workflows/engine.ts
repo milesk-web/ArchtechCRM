@@ -391,8 +391,8 @@ export function validateWorkflowDefinition(value: unknown): string[] {
         if (!["material_markup", "labour_markup", "none"].includes(markupType)) {
           errors.push(`Component "${component.name}" has an unsupported markup rule.`);
         }
-        if (pricing.section !== undefined && !["Roofing", "Wall Cladding", "Accessories", "Fees"].includes(pricing.section)) {
-          errors.push(`Component "${component.name}" has an unsupported pricing section.`);
+        if (!pricing.section || !["Roofing", "Wall Cladding", "Accessories", "Fees"].includes(pricing.section)) {
+          errors.push(`Component "${component.name}" must specify a valid pricing section.`);
         }
         if (markupType !== "none" && !["Roofing", "Wall Cladding"].includes(pricing.section ?? "")) {
           errors.push(`Component "${component.name}" must specify Roofing or Wall Cladding when applying a markup rule.`);
@@ -402,6 +402,18 @@ export function validateWorkflowDefinition(value: unknown): string[] {
         }
         if (markupType === "material_markup" && !["Material", "Flashing", "Underlay", "Accessory"].includes(component.category)) {
           errors.push(`Component "${component.name}" must use a material category with material markup.`);
+        }
+        if (component.category === "Fee" && pricing.section !== "Fees") {
+          errors.push(`Fee component "${component.name}" must use the Fees section.`);
+        }
+        if (component.category === "Labour" && !["Roofing", "Wall Cladding"].includes(pricing.section ?? "")) {
+          errors.push(`Labour component "${component.name}" must use Roofing or Wall Cladding.`);
+        }
+        if (["Material", "Flashing", "Underlay"].includes(component.category) && !["Roofing", "Wall Cladding"].includes(pricing.section ?? "")) {
+          errors.push(`Material component "${component.name}" must use Roofing or Wall Cladding.`);
+        }
+        if (component.category === "Accessory" && !["Accessories", "Roofing", "Wall Cladding"].includes(pricing.section ?? "")) {
+          errors.push(`Accessory component "${component.name}" must use Accessories, Roofing, or Wall Cladding.`);
         }
       }
     }
