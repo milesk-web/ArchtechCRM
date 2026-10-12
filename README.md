@@ -35,7 +35,7 @@ Do not blindly re-run legacy SQL that creates policies without checking whether 
 ## Versioned configuration
 
 - `/costing-rules` edits a draft costing rule set and publishes an immutable version. Only the published version is used for new calculations.
-- `/workflows` edits the conditional question and generated-work definition for the `roofing-cladding` workflow. Conditions support nested `all`, `any`, and `not`, plus equality, numeric comparisons, contains, and set/unset operators.
+- `/workflows` edits the conditional question and generated-work definition for the `roofing-cladding` workflow. Conditions support nested `all`, `any`, and `not`, plus equality, numeric comparisons, contains, and set/unset operators. Workflow components with a `pricing` block become quote lines; unpriced components remain a preview until a rate is configured.
 - Each calculation associated with a quote stores its input, catalogue snapshot, result, costing rule-set ID/version, workflow ID/version, and engine version in `quote_calculation_snapshots`.
 - The issue-quote endpoint requires a ready calculation snapshot and verifies that the saved quote lines still match it.
 
