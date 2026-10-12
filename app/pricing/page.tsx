@@ -56,10 +56,6 @@ export default function PricingPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    load();
-  }, []);
-
   async function load() {
     setLoading(true);
     setError("");
@@ -85,12 +81,12 @@ export default function PricingPage() {
       setOptions(optionData);
       setFlashings(flashingData);
 
-      if (!selectedFamily && familyData.length > 0) {
-        setSelectedFamily(familyData[0].id);
+      if (familyData.length > 0) {
+        setSelectedFamily((current) => current || familyData[0].id);
       }
 
-      if (!selectedDimension && dimensionData.length > 0) {
-        setSelectedDimension(dimensionData[0].id);
+      if (dimensionData.length > 0) {
+        setSelectedDimension((current) => current || dimensionData[0].id);
       }
     } catch (err) {
       setError(
@@ -103,6 +99,12 @@ export default function PricingPage() {
     }
   }
 
+
+  useEffect(() => {
+    void load();
+    // This loader intentionally runs once to seed the initial selection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   async function createFamily() {
     if (!name.trim()) return;
 
