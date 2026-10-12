@@ -451,6 +451,30 @@ export default function QuotePage() {
     setEngineResult(null);
   }
 
+  function updateFlashing(
+    which: "roof" | "wall",
+    id: string,
+    updates: Partial<FlashingRow>,
+  ) {
+    const setter = which === "roof" ? setRoof : setWall;
+    setter((current) => ({
+      ...current,
+      flashings: current.flashings.map((flashing) =>
+        flashing.id === id ? { ...flashing, ...updates } : flashing,
+      ),
+    }));
+    setEngineResult(null);
+  }
+
+  function removeFlashing(which: "roof" | "wall", id: string) {
+    const setter = which === "roof" ? setRoof : setWall;
+    setter((current) => ({
+      ...current,
+      flashings: current.flashings.filter((flashing) => flashing.id !== id),
+    }));
+    setEngineResult(null);
+  }
+
   function getWorkflowAnswers(): WorkflowAnswers {
     return {
       includeRoof,
@@ -689,7 +713,13 @@ export default function QuotePage() {
             form={roof}
             profileList={roofProfiles}
             enabled={includeRoof}
-            onEnabled={setIncludeRoof}
+            onEnabled={(value) => { setIncludeRoof(value); setEngineResult(null); }}
+            optionsByProfile={optionsByProfile}
+            materials={materials}
+            updateSection={updateSection}
+            addFlashing={addFlashing}
+            updateFlashing={updateFlashing}
+            removeFlashing={removeFlashing}
           />
           <SectionEditor
             title="Wall cladding"
@@ -697,7 +727,13 @@ export default function QuotePage() {
             form={wall}
             profileList={wallProfiles}
             enabled={includeWall}
-            onEnabled={setIncludeWall}
+            onEnabled={(value) => { setIncludeWall(value); setEngineResult(null); }}
+            optionsByProfile={optionsByProfile}
+            materials={materials}
+            updateSection={updateSection}
+            addFlashing={addFlashing}
+            updateFlashing={updateFlashing}
+            removeFlashing={removeFlashing}
           />
 
           <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
