@@ -42,4 +42,4 @@ The current costing rule sets and workflow definitions are global to this instal
 
 ## Quality checks
 
-The GitHub Actions workflow runs the costing and workflow regression tests with `npm test`. The existing repository-wide ESLint command currently reports pre-existing issues in several legacy pages and scripts; those are tracked separately from the focused regression-test workflow.
+The GitHub Actions workflow runs the costing/workflow regression tests with `npm test` and a Next.js production build with non-production placeholder environment values. The repository-wide ESLint command currently reports pre-existing issues in several legacy pages and scripts; it is not yet a green release gate.
