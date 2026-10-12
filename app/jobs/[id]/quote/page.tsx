@@ -281,6 +281,7 @@ export default function QuotePage() {
         quoteId: quote.id,
         jobContext: { measureRequired, isSmallJob },
         workflowAnswers: getWorkflowAnswers(),
+        workflowVersion,
       };
       if (
         includeRoof &&
