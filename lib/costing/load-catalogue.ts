@@ -120,8 +120,8 @@ export async function loadCatalogueSnapshot(): Promise<CatalogueSnapshot> {
   const labourRates = labourRatesRaw.map((r) => ({
     id: String(r.id),
     name: String(r.name),
-    section: (r.section as any) ?? null,
-    unit: (r.unit as any) ?? "m2",
+    section: (r.section as CatalogueSnapshot["labourRates"][number]["section"]) ?? null,
+    unit: (r.unit as CatalogueSnapshot["labourRates"][number]["unit"]) ?? "m2",
     baseRate: num(r.base_rate) ?? num(r.rate) ?? 0,
     sortOrder: Number(r.sort_order ?? 0),
   }));
@@ -148,8 +148,8 @@ export async function loadCatalogueSnapshot(): Promise<CatalogueSnapshot> {
       ? pricingRulesRaw.map((r) => ({
           id: String(r.id),
           name: String(r.name),
-          section: (r.section as any) ?? null,
-          ruleType: r.rule_type as any,
+          section: (r.section as CatalogueSnapshot["pricingRules"][number]["section"]) ?? null,
+          ruleType: r.rule_type as CatalogueSnapshot["pricingRules"][number]["ruleType"],
           value: Number(r.value),
         }))
       : [
