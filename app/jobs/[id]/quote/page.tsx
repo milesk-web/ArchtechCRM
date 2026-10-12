@@ -327,7 +327,7 @@ export default function QuotePage() {
       setError("Calculate first, then save.");
       return;
     }
-    const readyToIssue = engineResult.result.readyToIssue === true;
+    const readyToIssue = engineResult.result.readyToIssue === true && workflowEvaluation?.ready === true;
     setSaving(true);
     setError("");
     try {
@@ -365,7 +365,7 @@ export default function QuotePage() {
   }
 
   async function runIssue() {
-    if (!quote || !engineResult?.result?.readyToIssue || !sameSavedCalculation(engineResult.result.lines, savedLines)) {
+    if (!quote || !engineResult?.result?.readyToIssue || workflowEvaluation?.ready !== true || !sameSavedCalculation(engineResult.result.lines, savedLines)) {
       setError("Save the current fully priced calculation before issuing this quote.");
       return;
     }
