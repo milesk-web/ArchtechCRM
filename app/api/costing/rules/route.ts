@@ -208,41 +208,19 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Only an existing draft rule set can be published." }, { status: 409 });
       }
 
-      const { data: previous, error: previousError } = await supabaseAdmin
-        .from("costing_rule_sets")
-        .select("id")
-        .eq("status", "published")
-        .limit(1)
-        .maybeSingle();
-      if (previousError) throw new Error(`Unable to load current published rules: ${previousError.message}`);
+      const { data: publishedId, error: publishError } = await supabaseAdmin
+        .rpc("publish_costing_rule_set", { p_draft_id: body.draftId });
 
-      if (previous) {
-        const { error } = await supabaseAdmin
-          .from("costing_rule_sets")
-          .update({ status: "archived" })
-          .eq("id", previous.id)
-          .eq("status", "published");
-        if (error) throw new Error(`Unable to archive current rules: ${error.message}`);
+      if (publishError || !publishedId) {
+        throw new Error(publishError?.message ?? "Draft could not be published.");
       }
 
       const { data, error } = await supabaseAdmin
         .from("costing_rule_sets")
-        .update({ status: "published", published_at: new Date().toISOString() })
-        .eq("id", body.draftId)
-        .eq("status", "draft")
         .select("id, name, version, status, rules, published_at, created_at")
-        .maybeSingle();
-
-      if (error || !data) {
-        if (previous) {
-          await supabaseAdmin
-            .from("costing_rule_sets")
-            .update({ status: "published" })
-            .eq("id", previous.id)
-            .eq("status", "archived");
-        }
-        throw new Error(error?.message ?? "Draft could not be published.");
-      }
+        .eq("id", publishedId)
+        .single();
+      if (error) throw new Error(`Published, but unable to reload rule set: ${error.message}`);
 
       return NextResponse.json({ published: data });
     }
