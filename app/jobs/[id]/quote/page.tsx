@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { getJob, type Job } from "@/lib/jobs";
+import { evaluateWorkflow, type WorkflowAnswers, type WorkflowDefinition } from "@/lib/workflows/engine";
 import {
   getQuoteForJob,
   createQuote,
@@ -124,6 +125,10 @@ export default function QuotePage() {
 
   const [engineResult, setEngineResult] = useState<any>(null);
   const [savedLines, setSavedLines] = useState<QuoteLine[]>([]);
+  const [workflowDefinition, setWorkflowDefinition] = useState<WorkflowDefinition | null>(null);
+  const [workflowVersion, setWorkflowVersion] = useState<number | null>(null);
+  const [workflowExtraAnswers, setWorkflowExtraAnswers] = useState<WorkflowAnswers>({});
+  const [workflowError, setWorkflowError] = useState("");
 
   const loadOptions = useCallback(
     async (profileId: string) => {
@@ -151,10 +156,16 @@ export default function QuotePage() {
           quoteResult = await createQuote(jobId, jobResult.jobNumber);
         }
 
-        const [pRes, mRes, lines] = await Promise.all([
+        const [pRes, mRes, lines, workflowRes] = await Promise.all([
           fetch("/api/catalogue?table=profiles").then(readJson),
           fetch("/api/catalogue?table=materials").then(readJson),
           getQuoteLines(quoteResult.id),
+          fetch("/api/workflows?key=roofing-cladding")
+            .then(async (response) => {
+              const json = await readJson(response);
+              return response.ok ? json : { error: json.error || "Unable to load quote workflow." };
+            })
+            .catch((cause) => ({ error: cause instanceof Error ? cause.message : "Unable to load quote workflow." })),
         ]);
 
         setJob(jobResult);
@@ -162,6 +173,13 @@ export default function QuotePage() {
         setProfiles(pRes.data ?? []);
         setMaterials(mRes.data ?? []);
         setSavedLines(lines);
+        if (workflowRes?.published?.definition) {
+          setWorkflowDefinition(workflowRes.published.definition as WorkflowDefinition);
+          setWorkflowVersion(Number(workflowRes.published.version));
+          setWorkflowError("");
+        } else {
+          setWorkflowError(workflowRes?.error || "No published quote workflow was found.");
+        }
 
         const roofMat = lines.find(
           (l) =>
@@ -219,6 +237,18 @@ export default function QuotePage() {
     setEngineResult(null);
   }
 
+  function getWorkflowAnswers(): WorkflowAnswers {
+    return {
+      includeRoof,
+      "roof.areaM2": roof.areaM2,
+      includeWall,
+      "wall.areaM2": wall.areaM2,
+      measureRequired,
+      isSmallJob,
+      ...workflowExtraAnswers,
+    };
+  }
+
   function sectionPayload(s: SectionForm) {
     return {
       areaM2: s.areaM2,
@@ -250,6 +280,8 @@ export default function QuotePage() {
       const body: Record<string, unknown> = {
         quoteId: quote.id,
         jobContext: { measureRequired, isSmallJob },
+        workflowAnswers: getWorkflowAnswers(),
+        workflowVersion,
       };
       if (
         includeRoof &&
@@ -282,7 +314,7 @@ export default function QuotePage() {
       if (!res.ok) throw new Error(json.error || "Calculate failed");
       setEngineResult(json);
       setStatus(
-        `Calculated with costing rules v${json.meta?.ruleSetVersion ?? "?"} — review totals, then Save quote.`,
+        `Calculated with costing rules v${json.meta?.ruleSetVersion ?? "?"} and workflow v${json.meta?.workflowVersion ?? "?"} — review totals, then save.`,
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Calculate failed");
@@ -296,7 +328,7 @@ export default function QuotePage() {
       setError("Calculate first, then save.");
       return;
     }
-    const readyToIssue = engineResult.result.readyToIssue === true;
+    const readyToIssue = engineResult.result.readyToIssue === true && workflowEvaluation?.ready === true;
     setSaving(true);
     setError("");
     try {
@@ -334,7 +366,7 @@ export default function QuotePage() {
   }
 
   async function runIssue() {
-    if (!quote || !engineResult?.result?.readyToIssue || !sameSavedCalculation(engineResult.result.lines, savedLines)) {
+    if (!quote || !engineResult?.result?.readyToIssue || workflowEvaluation?.ready !== true || !sameSavedCalculation(engineResult.result.lines, savedLines)) {
       setError("Save the current fully priced calculation before issuing this quote.");
       return;
     }
@@ -610,7 +642,26 @@ export default function QuotePage() {
   }
 
   const result = engineResult?.result;
-  const currentCalculationSaved = Boolean(result?.readyToIssue && sameSavedCalculation(result.lines, savedLines));
+  const workflowAnswers = getWorkflowAnswers();
+  const workflowEvaluation = workflowDefinition
+    ? evaluateWorkflow(workflowDefinition, workflowAnswers)
+    : null;
+  const workflowCoreFieldIds = new Set([
+    "includeRoof",
+    "roof.areaM2",
+    "includeWall",
+    "wall.areaM2",
+    "measureRequired",
+    "isSmallJob",
+  ]);
+  const extraWorkflowFields = workflowEvaluation?.visibleFields.filter(
+    (field) => !workflowCoreFieldIds.has(field.id),
+  ) ?? [];
+  const currentCalculationSaved = Boolean(
+    result?.readyToIssue &&
+    workflowEvaluation?.ready === true &&
+    sameSavedCalculation(result.lines, savedLines),
+  );
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
