@@ -99,6 +99,8 @@ export default function PricingPage() {
 
 
   useEffect(() => {
+    // Loading remote pricing data is intentionally triggered on mount.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, []);
   async function createFamily() {
