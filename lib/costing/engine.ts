@@ -335,6 +335,12 @@ function calculateSection(
         r.name.toLowerCase().includes("tray") ||
         r.name.toLowerCase().includes("cladding")),
   );
+  if (!baseLabour && input.areaM2 > 0) {
+    warnings.push(
+      `${section}: No active labour rate found for this section; labour is not priced.`,
+    );
+  }
+
   if (baseLabour && input.areaM2 > 0) {
     const pitchMult = pitchMultiplier(
       input.pitchDegrees,
@@ -375,6 +381,19 @@ export function calculateQuote(
 ): QuoteResult {
   const warnings: string[] = [];
   const lines: CostLine[] = [];
+
+  for (const [sectionName, sectionInput] of [
+    ["Roofing", input.roof],
+    ["Wall Cladding", input.wall],
+  ] as const) {
+    if (!sectionInput) continue;
+    if (!Number.isFinite(sectionInput.areaM2) || sectionInput.areaM2 <= 0) {
+      warnings.push(`${sectionName}: Area must be greater than zero.`);
+    }
+    if (!sectionInput.profileId || !sectionInput.profileOptionId || !sectionInput.materialId) {
+      warnings.push(`${sectionName}: Select a profile, profile option, and material.`);
+    }
+  }
 
   const materialRoof =
     input.margins?.materialRoof ??
@@ -552,6 +571,16 @@ export function calculateQuote(
       labourWall,
     },
     warnings,
+    readyToIssue:
+      warnings.length === 0 &&
+      lines.length > 0 &&
+      lines.every(
+        (line) =>
+          line.unitCost != null &&
+          Number.isFinite(line.unitCost) &&
+          line.sellPrice != null &&
+          Number.isFinite(line.sellPrice),
+      ),
     meta: {
       calculatedAt: new Date().toISOString(),
     },

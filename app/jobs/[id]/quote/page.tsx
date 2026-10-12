@@ -259,6 +259,7 @@ export default function QuotePage() {
       setError("Calculate first, then save.");
       return;
     }
+    const readyToIssue = engineResult.result.readyToIssue === true;
     setSaving(true);
     setError("");
     try {
@@ -282,7 +283,7 @@ export default function QuotePage() {
 
       const sellTotal = engineResult.result?.sell?.total;
       try {
-        if (job && job.status === "Opportunity") {
+        if (readyToIssue && job && job.status === "Opportunity") {
           const today = new Date().toISOString().slice(0, 10);
           await updateJob(job.id, {
             status: "Quoted",
@@ -301,7 +302,9 @@ export default function QuotePage() {
       const totalLabel =
         sellTotal != null ? ` · sell ${money(sellTotal)}` : "";
       setStatus(
-        `Saved ${saved.length} line(s)${totalLabel}. Return to the job card when ready.`,
+        readyToIssue
+          ? `Saved ${saved.length} priced line(s)${totalLabel}. The quote is ready for review.`
+          : `Saved ${saved.length} line(s) as a draft${totalLabel}. The job has not been marked Quoted because pricing is incomplete; resolve the notes below and recalculate.`,
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Save failed");
@@ -640,7 +643,7 @@ export default function QuotePage() {
               disabled={saving || !result}
               className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
             >
-              {saving ? "Saving…" : "Save quote"}
+              {saving ? "Saving…" : result?.readyToIssue ? "Save quote" : "Save draft"}
             </button>
           </div>
 
@@ -657,7 +660,23 @@ export default function QuotePage() {
 
           {result && (
             <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-              <h2 className="mb-4 text-lg font-medium">Totals</h2>
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-lg font-medium">Totals</h2>
+                <span
+                  className={`rounded-full px-3 py-1 text-xs font-medium ${
+                    result.readyToIssue
+                      ? "bg-emerald-100 text-emerald-800"
+                      : "bg-amber-100 text-amber-900"
+                  }`}
+                >
+                  {result.readyToIssue ? "Ready for review" : "Draft — pricing incomplete"}
+                </span>
+              </div>
+              {!result.readyToIssue && (
+                <p className="mb-4 text-sm text-amber-900">
+                  This calculation cannot move the job to Quoted until all required rates are present and the warnings below are resolved.
+                </p>
+              )}
               <div className="mb-4 grid grid-cols-2 gap-3 text-sm">
                 <div className="rounded bg-zinc-50 p-3">
                   <div className="text-zinc-500">Direct cost</div>
