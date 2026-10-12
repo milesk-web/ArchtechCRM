@@ -165,7 +165,7 @@ export default function CostingRulesPage() {
               Version and publish the markups and job fees used by quote calculations.
             </p>
           </div>
-          <Link href="/pricing" className="text-sm text-blue-700 hover:underline">Back to pricing</Link>
+          <div className="flex flex-wrap gap-4 text-sm"><Link href="/pricing" className="text-blue-700 hover:underline">Back to pricing</Link><Link href="/workflows" className="text-blue-700 hover:underline">Workflow builder</Link></div>
         </div>
       </header>
 
