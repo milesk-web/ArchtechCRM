@@ -10,6 +10,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { getJob, type Job } from "@/lib/jobs";
 import { evaluateWorkflow, type WorkflowAnswers, type WorkflowDefinition } from "@/lib/workflows/engine";
+import type { QuoteResult } from "@/lib/costing/types";
 import {
   getQuoteForJob,
   createQuote,
@@ -20,6 +21,13 @@ import {
 } from "@/lib/quotes";
 
 type Opt = { id: string; name?: string; value?: string; section?: string };
+type CatalogueListResponse = { data?: Opt[]; error?: string };
+type CalculationApiResponse = {
+  result: QuoteResult;
+  meta?: { ruleSetVersion?: number; workflowVersion?: number };
+};
+type WorkflowLoadResponse = { published?: { definition: WorkflowDefinition; version: number }; error?: string };
+type IssueApiResponse = { error?: string; details?: string[]; jobStatus?: string };
 
 type FlashingRow = {
   id: string;
@@ -88,10 +96,10 @@ function sameSavedCalculation(
   });
 }
 
-async function readJson(res: Response) {
+async function readJson<T>(res: Response): Promise<T> {
   const text = await res.text();
   try {
-    return JSON.parse(text);
+    return JSON.parse(text) as T;
   } catch {
     throw new Error(text.slice(0, 280) || `HTTP ${res.status}`);
   }
@@ -123,7 +131,7 @@ export default function QuotePage() {
   const [measureRequired, setMeasureRequired] = useState(false);
   const [isSmallJob, setIsSmallJob] = useState(false);
 
-  const [engineResult, setEngineResult] = useState<any>(null);
+  const [engineResult, setEngineResult] = useState<CalculationApiResponse | null>(null);
   const [savedLines, setSavedLines] = useState<QuoteLine[]>([]);
   const [workflowDefinition, setWorkflowDefinition] = useState<WorkflowDefinition | null>(null);
   const [workflowVersion, setWorkflowVersion] = useState<number | null>(null);
@@ -136,7 +144,7 @@ export default function QuotePage() {
       const res = await fetch(
         `/api/catalogue?table=profile_options&profile_id=${profileId}`,
       );
-      const json = await readJson(res);
+      const json = await readJson<CatalogueListResponse>(res);
       if (!res.ok) throw new Error(json.error || "Options failed");
       setOptionsByProfile((c) => ({ ...c, [profileId]: json.data ?? [] }));
     },
@@ -157,15 +165,15 @@ export default function QuotePage() {
         }
 
         const [pRes, mRes, lines, workflowRes] = await Promise.all([
-          fetch("/api/catalogue?table=profiles").then(readJson),
-          fetch("/api/catalogue?table=materials").then(readJson),
+          fetch("/api/catalogue?table=profiles").then((response) => readJson<CatalogueListResponse>(response)),
+          fetch("/api/catalogue?table=materials").then((response) => readJson<CatalogueListResponse>(response)),
           getQuoteLines(quoteResult.id),
           fetch("/api/workflows?key=roofing-cladding")
             .then(async (response) => {
-              const json = await readJson(response);
-              return response.ok ? json : { error: json.error || "Unable to load quote workflow." };
+              const json = await readJson<WorkflowLoadResponse>(response);
+              return response.ok ? json : { error: json.error || "Unable to load quote workflow." } as WorkflowLoadResponse;
             })
-            .catch((cause) => ({ error: cause instanceof Error ? cause.message : "Unable to load quote workflow." })),
+            .catch((cause): WorkflowLoadResponse => ({ error: cause instanceof Error ? cause.message : "Unable to load quote workflow." })),
         ]);
 
         setJob(jobResult);
@@ -310,7 +318,7 @@ export default function QuotePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const json = await readJson(res);
+      const json = await readJson<CalculationApiResponse>(res);
       if (!res.ok) throw new Error(json.error || "Calculate failed");
       setEngineResult(json);
       setStatus(
@@ -333,7 +341,7 @@ export default function QuotePage() {
     setError("");
     try {
       const lines: QuoteLine[] = engineResult.result.lines.map(
-        (line: any, i: number) => ({
+        (line, i) => ({
           id: line.id || crypto.randomUUID(),
           quoteId: quote.id,
           section: line.section,
@@ -378,7 +386,7 @@ export default function QuotePage() {
       const response = await fetch(`/api/quotes/${encodeURIComponent(quote.id)}/issue`, {
         method: "POST",
       });
-      const json = await readJson(response);
+      const json = await readJson<IssueApiResponse>(response);
       if (!response.ok) {
         const details = Array.isArray(json.details) ? ` ${json.details.join(" ")}` : "";
         throw new Error((json.error || "Unable to issue quote.") + details);
@@ -945,7 +953,7 @@ export default function QuotePage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(result.lines ?? []).map((line: any) => (
+                    {(result.lines ?? []).map((line) => (
                       <tr key={line.id} className="border-b border-zinc-100">
                         <td className="py-1.5 pr-2">{line.description}</td>
                         <td className="py-1.5 pr-2">
