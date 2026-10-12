@@ -213,7 +213,9 @@ export default function QuotePage() {
     setError("");
     setStatus("");
     try {
+      if (!quote) throw new Error("The quote is still loading. Try again in a moment.");
       const body: Record<string, unknown> = {
+        quoteId: quote.id,
         jobContext: { measureRequired, isSmallJob },
       };
       if (
@@ -246,7 +248,9 @@ export default function QuotePage() {
       const json = await readJson(res);
       if (!res.ok) throw new Error(json.error || "Calculate failed");
       setEngineResult(json);
-      setStatus("Calculated — review totals, then Save quote.");
+      setStatus(
+        `Calculated with costing rules v${json.meta?.ruleSetVersion ?? "?"} — review totals, then Save quote.`,
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Calculate failed");
     } finally {
