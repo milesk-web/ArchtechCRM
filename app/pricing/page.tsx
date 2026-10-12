@@ -56,13 +56,7 @@ export default function PricingPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    load();
-  }, []);
-
   async function load() {
-    setLoading(true);
-    setError("");
 
     try {
       const [
@@ -85,12 +79,12 @@ export default function PricingPage() {
       setOptions(optionData);
       setFlashings(flashingData);
 
-      if (!selectedFamily && familyData.length > 0) {
-        setSelectedFamily(familyData[0].id);
+      if (familyData.length > 0) {
+        setSelectedFamily((current) => current || familyData[0].id);
       }
 
-      if (!selectedDimension && dimensionData.length > 0) {
-        setSelectedDimension(dimensionData[0].id);
+      if (dimensionData.length > 0) {
+        setSelectedDimension((current) => current || dimensionData[0].id);
       }
     } catch (err) {
       setError(
@@ -103,6 +97,12 @@ export default function PricingPage() {
     }
   }
 
+
+  useEffect(() => {
+    // Loading remote pricing data is intentionally triggered on mount.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load();
+  }, []);
   async function createFamily() {
     if (!name.trim()) return;
 

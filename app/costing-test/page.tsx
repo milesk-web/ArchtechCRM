@@ -4,11 +4,20 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 
 type Option = { id: string; name?: string; value?: string; section?: string };
+type CataloguePayload = { data?: Option[]; error?: string };
+type CostingLine = { id: string; description: string; quantity: number; unit: string; unitCost: number | null; sellPrice: number | null };
+type CostingResult = {
+  lines?: CostingLine[];
+  direct?: { total?: number; material?: number; labour?: number; fees?: number };
+  sell?: { total?: number; material?: number; labour?: number; fees?: number };
+  warnings?: string[];
+};
+type CostingApiResponse = { result?: CostingResult; error?: string; message?: string };
 
-async function readJson(res: Response): Promise<any> {
+async function readJson<T>(res: Response): Promise<T> {
   const text = await res.text();
   try {
-    return JSON.parse(text);
+    return JSON.parse(text) as T;
   } catch {
     throw new Error(
       text.slice(0, 300) || `Server returned non-JSON (status ${res.status})`,
@@ -29,7 +38,7 @@ export default function CostingTestPage() {
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(false);
   const [calculating, setCalculating] = useState(false);
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<CostingApiResponse | null>(null);
   const [error, setError] = useState("");
   const [seedMsg, setSeedMsg] = useState("");
 
@@ -45,8 +54,8 @@ export default function CostingTestPage() {
         fetch("/api/catalogue?table=profiles"),
         fetch("/api/catalogue?table=materials"),
       ]);
-      const pJson = await readJson(pRes);
-      const mJson = await readJson(mRes);
+      const pJson = await readJson<CataloguePayload>(pRes);
+      const mJson = await readJson<CataloguePayload>(mRes);
       if (!pRes.ok) throw new Error(pJson.error || "Could not load profiles");
       if (!mRes.ok) throw new Error(mJson.error || "Could not load materials");
       setProfiles(pJson.data ?? []);
@@ -67,7 +76,7 @@ export default function CostingTestPage() {
       const res = await fetch(
         `/api/catalogue?table=profile_options&profile_id=${id}`,
       );
-      const json = await readJson(res);
+      const json = await readJson<CataloguePayload>(res);
       if (!res.ok) throw new Error(json.error || "Could not load options");
       setOptions(json.data ?? []);
     } catch (e) {
@@ -81,7 +90,7 @@ export default function CostingTestPage() {
     setError("");
     try {
       const res = await fetch("/api/costing/seed", { method: "POST" });
-      const json = await readJson(res);
+      const json = await readJson<{ error?: string; message?: string }>(res);
       if (!res.ok) throw new Error(json.error || "Seed failed");
       setSeedMsg(json.message || "Seed complete");
       await loadLists();
@@ -120,7 +129,7 @@ export default function CostingTestPage() {
           },
         }),
       });
-      const json = await readJson(res);
+      const json = await readJson<CostingApiResponse>(res);
       if (!res.ok) throw new Error(json.error || "Calculate failed");
       setResult(json);
     } catch (e) {
@@ -334,7 +343,7 @@ export default function CostingTestPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(result.result?.lines ?? []).map((line: any) => (
+                  {(result.result?.lines ?? []).map((line) => (
                     <tr key={line.id} className="border-b border-zinc-100">
                       <td className="py-1.5 pr-2">{line.description}</td>
                       <td className="py-1.5 pr-2">

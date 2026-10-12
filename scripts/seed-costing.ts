@@ -13,6 +13,20 @@ import { createClient } from "@supabase/supabase-js";
 import profileRates from "../seed/profile-rates.json";
 import pricingRules from "../seed/pricing-rules.json";
 
+type ProfileRateSeed = {
+  profile: string;
+  option: string;
+  material: string;
+  unit: "m2" | "lm";
+  unit_cost: number;
+};
+type PricingRuleSeed = {
+  name: string;
+  section: "Roofing" | "Wall Cladding" | null;
+  rule_type: "material_markup" | "labour_markup" | "small_job_fee" | "measure_fee" | "travel_rate_per_hour" | "distance_rate_per_km" | "meal_allowance" | "accommodation_per_week";
+  value: number;
+};
+
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -126,8 +140,8 @@ async function upsertByName(
   const map = new Map<string, string>();
   const { data: existing, error: loadErr } = await sb.from(table).select(`id, ${nameKey}`);
   if (loadErr) throw loadErr;
-  for (const row of existing ?? []) {
-    map.set(String((row as any)[nameKey]), (row as any).id);
+  for (const row of (existing ?? []) as Array<Record<string, unknown>>) {
+    map.set(String(row[nameKey]), String(row.id));
   }
   for (const row of rows) {
     const name = String(row[nameKey]);
@@ -209,8 +223,8 @@ async function main() {
 
   console.log("Material rates...");
   let rateCount = 0;
-  for (const row of profileRates as any[]) {
-    let profileId =
+  for (const row of profileRates as ProfileRateSeed[]) {
+    const profileId =
       profileIds.get(`Roofing::${row.profile}`) ??
       profileIds.get(`Wall Cladding::${row.profile}`);
     if (!profileId) {
@@ -328,7 +342,7 @@ async function main() {
   console.log("  done");
 
   console.log("Pricing rules...");
-  for (const r of pricingRules as any[]) {
+  for (const r of pricingRules as PricingRuleSeed[]) {
     const { data: existing } = await sb
       .from("pricing_rules")
       .select("id")

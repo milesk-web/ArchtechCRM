@@ -10,6 +10,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { getJob, type Job } from "@/lib/jobs";
 import { evaluateWorkflow, type WorkflowAnswers, type WorkflowDefinition } from "@/lib/workflows/engine";
+import type { QuoteResult } from "@/lib/costing/types";
 import {
   getQuoteForJob,
   createQuote,
@@ -20,6 +21,14 @@ import {
 } from "@/lib/quotes";
 
 type Opt = { id: string; name?: string; value?: string; section?: string };
+type CatalogueListResponse = { data?: Opt[]; error?: string };
+type CalculationApiResponse = {
+  result: QuoteResult;
+  error?: string;
+  meta?: { ruleSetVersion?: number; workflowVersion?: number };
+};
+type WorkflowLoadResponse = { published?: { definition: WorkflowDefinition; version: number }; error?: string };
+type IssueApiResponse = { error?: string; details?: string[]; jobStatus?: string };
 
 type FlashingRow = {
   id: string;
@@ -88,339 +97,28 @@ function sameSavedCalculation(
   });
 }
 
-async function readJson(res: Response) {
+async function readJson<T>(res: Response): Promise<T> {
   const text = await res.text();
   try {
-    return JSON.parse(text);
+    return JSON.parse(text) as T;
   } catch {
     throw new Error(text.slice(0, 280) || `HTTP ${res.status}`);
   }
 }
 
-export default function QuotePage() {
-  const params = useParams();
-  const router = useRouter();
-  const jobId = params.id as string;
-
-  const [job, setJob] = useState<Job | null>(null);
-  const [quote, setQuote] = useState<Quote | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [calculating, setCalculating] = useState(false);
-  const [error, setError] = useState("");
-  const [status, setStatus] = useState("");
-
-  const [profiles, setProfiles] = useState<Opt[]>([]);
-  const [materials, setMaterials] = useState<Opt[]>([]);
-  const [optionsByProfile, setOptionsByProfile] = useState<
-    Record<string, Opt[]>
-  >({});
-
-  const [roof, setRoof] = useState<SectionForm>(emptySection);
-  const [wall, setWall] = useState<SectionForm>(emptySection);
-  const [includeRoof, setIncludeRoof] = useState(true);
-  const [includeWall, setIncludeWall] = useState(false);
-  const [measureRequired, setMeasureRequired] = useState(false);
-  const [isSmallJob, setIsSmallJob] = useState(false);
-
-  const [engineResult, setEngineResult] = useState<any>(null);
-  const [savedLines, setSavedLines] = useState<QuoteLine[]>([]);
-  const [workflowDefinition, setWorkflowDefinition] = useState<WorkflowDefinition | null>(null);
-  const [workflowVersion, setWorkflowVersion] = useState<number | null>(null);
-  const [workflowExtraAnswers, setWorkflowExtraAnswers] = useState<WorkflowAnswers>({});
-  const [workflowError, setWorkflowError] = useState("");
-
-  const loadOptions = useCallback(
-    async (profileId: string) => {
-      if (!profileId || optionsByProfile[profileId]) return;
-      const res = await fetch(
-        `/api/catalogue?table=profile_options&profile_id=${profileId}`,
-      );
-      const json = await readJson(res);
-      if (!res.ok) throw new Error(json.error || "Options failed");
-      setOptionsByProfile((c) => ({ ...c, [profileId]: json.data ?? [] }));
-    },
-    [optionsByProfile],
-  );
-
-  useEffect(() => {
-    async function init() {
-      try {
-        const jobResult = await getJob(jobId);
-        if (!jobResult) {
-          router.replace("/jobs");
-          return;
-        }
-        let quoteResult = await getQuoteForJob(jobId);
-        if (!quoteResult) {
-          quoteResult = await createQuote(jobId, jobResult.jobNumber);
-        }
-
-        const [pRes, mRes, lines, workflowRes] = await Promise.all([
-          fetch("/api/catalogue?table=profiles").then(readJson),
-          fetch("/api/catalogue?table=materials").then(readJson),
-          getQuoteLines(quoteResult.id),
-          fetch("/api/workflows?key=roofing-cladding")
-            .then(async (response) => {
-              const json = await readJson(response);
-              return response.ok ? json : { error: json.error || "Unable to load quote workflow." };
-            })
-            .catch((cause) => ({ error: cause instanceof Error ? cause.message : "Unable to load quote workflow." })),
-        ]);
-
-        setJob(jobResult);
-        setQuote(quoteResult);
-        setProfiles(pRes.data ?? []);
-        setMaterials(mRes.data ?? []);
-        setSavedLines(lines);
-        if (workflowRes?.published?.definition) {
-          setWorkflowDefinition(workflowRes.published.definition as WorkflowDefinition);
-          setWorkflowVersion(Number(workflowRes.published.version));
-          setWorkflowError("");
-        } else {
-          setWorkflowError(workflowRes?.error || "No published quote workflow was found.");
-        }
-
-        const roofMat = lines.find(
-          (l) =>
-            l.section === "Roofing" &&
-            l.category === "Material" &&
-            l.metadata?.kind === "profile",
-        );
-        if (roofMat?.metadata) {
-          const m = roofMat.metadata as Record<string, unknown>;
-          setRoof((r) => ({
-            ...r,
-            areaM2: Number(m.area ?? roofMat.quantity) || 0,
-            profileId: String(m.profileId ?? ""),
-            profileOptionId: String(m.profileOptionId ?? ""),
-            materialId: String(m.materialId ?? ""),
-          }));
-          if (m.profileId) loadOptions(String(m.profileId));
-        }
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to load quote");
-      } finally {
-        setLoading(false);
-      }
-    }
-    init();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobId, router]);
-
-  function updateSection(which: "roof" | "wall", patch: Partial<SectionForm>) {
-    const setter = which === "roof" ? setRoof : setWall;
-    setter((cur) => {
-      const next = { ...cur, ...patch };
-      if (patch.profileId !== undefined) {
-        next.profileOptionId = "";
-        if (patch.profileId) loadOptions(patch.profileId).catch(() => {});
-      }
-      return next;
-    });
-    setEngineResult(null);
-  }
-
-  function addFlashing(which: "roof" | "wall") {
-    const row: FlashingRow = {
-      id: crypto.randomUUID(),
-      name: "",
-      girthMm: 400,
-      lengthM: 0,
-      quantity: 1,
-    };
-    if (which === "roof") {
-      setRoof((c) => ({ ...c, flashings: [...c.flashings, row] }));
-    } else {
-      setWall((c) => ({ ...c, flashings: [...c.flashings, row] }));
-    }
-    setEngineResult(null);
-  }
-
-  function getWorkflowAnswers(): WorkflowAnswers {
-    return {
-      includeRoof,
-      "roof.areaM2": roof.areaM2,
-      includeWall,
-      "wall.areaM2": wall.areaM2,
-      measureRequired,
-      isSmallJob,
-      ...workflowExtraAnswers,
-    };
-  }
-
-  function sectionPayload(s: SectionForm) {
-    return {
-      areaM2: s.areaM2,
-      linealMetres: s.areaM2,
-      profileId: s.profileId,
-      profileOptionId: s.profileOptionId,
-      materialId: s.materialId,
-      pitchDegrees: s.pitchDegrees,
-      flashings: s.flashings
-        .filter((f) => f.lengthM > 0)
-        .map((f) => ({
-          id: f.id,
-          flashingTypeId: null,
-          customName: f.name || "Flashing",
-          girthMm: f.girthMm,
-          materialId: s.materialId,
-          lengthM: f.lengthM,
-          quantity: f.quantity,
-        })),
-    };
-  }
-
-  async function runCalculate() {
-    setCalculating(true);
-    setError("");
-    setStatus("");
-    try {
-      if (!quote) throw new Error("The quote is still loading. Try again in a moment.");
-      const body: Record<string, unknown> = {
-        quoteId: quote.id,
-        jobContext: { measureRequired, isSmallJob },
-        workflowAnswers: getWorkflowAnswers(),
-        workflowVersion,
-      };
-      if (
-        includeRoof &&
-        roof.profileId &&
-        roof.materialId &&
-        roof.profileOptionId
-      ) {
-        body.roof = sectionPayload(roof);
-      }
-      if (
-        includeWall &&
-        wall.profileId &&
-        wall.materialId &&
-        wall.profileOptionId
-      ) {
-        body.wall = sectionPayload(wall);
-      }
-      if (!body.roof && !body.wall) {
-        throw new Error(
-          "Enable Roof and/or Wall and select profile, option, and material.",
-        );
-      }
-
-      const res = await fetch("/api/costing/calculate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const json = await readJson(res);
-      if (!res.ok) throw new Error(json.error || "Calculate failed");
-      setEngineResult(json);
-      setStatus(
-        `Calculated with costing rules v${json.meta?.ruleSetVersion ?? "?"} and workflow v${json.meta?.workflowVersion ?? "?"} — review totals, then save.`,
-      );
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Calculate failed");
-    } finally {
-      setCalculating(false);
-    }
-  }
-
-  async function runSave() {
-    if (!quote || !engineResult?.result?.lines) {
-      setError("Calculate first, then save.");
-      return;
-    }
-    const readyToIssue = engineResult.result.readyToIssue === true && workflowEvaluation?.ready === true;
-    setSaving(true);
-    setError("");
-    try {
-      const lines: QuoteLine[] = engineResult.result.lines.map(
-        (line: any, i: number) => ({
-          id: line.id || crypto.randomUUID(),
-          quoteId: quote.id,
-          section: line.section,
-          category: line.category,
-          description: line.description,
-          quantity: line.quantity,
-          unit: line.unit,
-          unitCost: line.unitCost,
-          sellPrice: line.sellPrice,
-          sortOrder: line.sortOrder ?? i,
-          metadata: line.metadata ?? {},
-        }),
-      );
-      const saved = await saveQuoteLines(quote.id, lines);
-      setSavedLines(saved);
-
-      const sellTotal = engineResult.result?.sell?.total;
-      const totalLabel =
-        sellTotal != null ? ` · sell ${money(sellTotal)}` : "";
-      setStatus(
-        readyToIssue
-          ? `Saved ${saved.length} priced line(s)${totalLabel}. Review the quote, then use Issue quote when it is ready to send.`
-          : `Saved ${saved.length} line(s) as a draft${totalLabel}. The job has not been marked Quoted because pricing is incomplete; resolve the notes below and recalculate.`,
-      );
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Save failed");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function runIssue() {
-    if (!quote || !engineResult?.result?.readyToIssue || workflowEvaluation?.ready !== true || !sameSavedCalculation(engineResult.result.lines, savedLines)) {
-      setError("Save the current fully priced calculation before issuing this quote.");
-      return;
-    }
-
-    setSaving(true);
-    setError("");
-    setStatus("");
-    try {
-      const response = await fetch(`/api/quotes/${encodeURIComponent(quote.id)}/issue`, {
-        method: "POST",
-      });
-      const json = await readJson(response);
-      if (!response.ok) {
-        const details = Array.isArray(json.details) ? ` ${json.details.join(" ")}` : "";
-        throw new Error((json.error || "Unable to issue quote.") + details);
-      }
-
-      setQuote({ ...quote, status: "Issued" });
-      if (job && json.jobStatus === "Quoted" && job.status === "Opportunity") {
-        const today = new Date().toISOString().slice(0, 10);
-        setJob({ ...job, status: "Quoted", dates: { ...job.dates, quoted: today } });
-      }
-      setStatus("Quote issued successfully. The issue status was confirmed by the server.");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to issue quote.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function uniqueByName(list: Opt[]) {
-    const seen = new Set<string>();
-    return list.filter((p) => {
-      const key = (p.name ?? "").toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }
-
-  const roofProfiles = uniqueByName(
-    profiles.filter((p) => p.section === "Roofing"),
-  );
-  const wallProfiles = uniqueByName(
-    profiles.filter((p) => p.section === "Wall Cladding"),
-  );
-
-  function SectionEditor({
+function SectionEditor({
     title,
     which,
     form,
     profileList,
     enabled,
     onEnabled,
+    optionsByProfile,
+    materials,
+    updateSection,
+    addFlashing,
+    updateFlashing,
+    removeFlashing,
   }: {
     title: string;
     which: "roof" | "wall";
@@ -428,6 +126,12 @@ export default function QuotePage() {
     profileList: Opt[];
     enabled: boolean;
     onEnabled: (v: boolean) => void;
+    optionsByProfile: Record<string, Opt[]>;
+    materials: Opt[];
+    updateSection: (which: "roof" | "wall", patch: Partial<SectionForm>) => void;
+    addFlashing: (which: "roof" | "wall") => void;
+    updateFlashing: (which: "roof" | "wall", id: string, updates: Partial<FlashingRow>) => void;
+    removeFlashing: (which: "roof" | "wall", id: string) => void;
   }) {
     const opts = optionsByProfile[form.profileId] ?? [];
     return (
@@ -440,7 +144,6 @@ export default function QuotePage() {
               checked={enabled}
               onChange={(e) => {
                 onEnabled(e.target.checked);
-                setEngineResult(null);
               }}
             />
             Include
@@ -566,14 +269,7 @@ export default function QuotePage() {
                     value={f.name}
                     onChange={(e) => {
                       const name = e.target.value;
-                      const setter = which === "roof" ? setRoof : setWall;
-                      setter((c) => ({
-                        ...c,
-                        flashings: c.flashings.map((x) =>
-                          x.id === f.id ? { ...x, name } : x,
-                        ),
-                      }));
-                      setEngineResult(null);
+                      updateFlashing(which, f.id, { name });
                     }}
                   />
                   <input
@@ -583,14 +279,7 @@ export default function QuotePage() {
                     value={f.girthMm || ""}
                     onChange={(e) => {
                       const girthMm = Number(e.target.value) || 0;
-                      const setter = which === "roof" ? setRoof : setWall;
-                      setter((c) => ({
-                        ...c,
-                        flashings: c.flashings.map((x) =>
-                          x.id === f.id ? { ...x, girthMm } : x,
-                        ),
-                      }));
-                      setEngineResult(null);
+                      updateFlashing(which, f.id, { girthMm });
                     }}
                   />
                   <input
@@ -600,26 +289,14 @@ export default function QuotePage() {
                     value={f.lengthM || ""}
                     onChange={(e) => {
                       const lengthM = Number(e.target.value) || 0;
-                      const setter = which === "roof" ? setRoof : setWall;
-                      setter((c) => ({
-                        ...c,
-                        flashings: c.flashings.map((x) =>
-                          x.id === f.id ? { ...x, lengthM } : x,
-                        ),
-                      }));
-                      setEngineResult(null);
+                      updateFlashing(which, f.id, { lengthM });
                     }}
                   />
                   <button
                     type="button"
                     className="text-left text-xs text-red-600"
                     onClick={() => {
-                      const setter = which === "roof" ? setRoof : setWall;
-                      setter((c) => ({
-                        ...c,
-                        flashings: c.flashings.filter((x) => x.id !== f.id),
-                      }));
-                      setEngineResult(null);
+                      removeFlashing(which, f.id);
                     }}
                   >
                     Remove
@@ -632,6 +309,349 @@ export default function QuotePage() {
       </section>
     );
   }
+
+
+export default function QuotePage() {
+  const params = useParams();
+  const router = useRouter();
+  const jobId = params.id as string;
+
+  const [job, setJob] = useState<Job | null>(null);
+  const [quote, setQuote] = useState<Quote | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [calculating, setCalculating] = useState(false);
+  const [error, setError] = useState("");
+  const [status, setStatus] = useState("");
+
+  const [profiles, setProfiles] = useState<Opt[]>([]);
+  const [materials, setMaterials] = useState<Opt[]>([]);
+  const [optionsByProfile, setOptionsByProfile] = useState<
+    Record<string, Opt[]>
+  >({});
+
+  const [roof, setRoof] = useState<SectionForm>(emptySection);
+  const [wall, setWall] = useState<SectionForm>(emptySection);
+  const [includeRoof, setIncludeRoof] = useState(true);
+  const [includeWall, setIncludeWall] = useState(false);
+  const [measureRequired, setMeasureRequired] = useState(false);
+  const [isSmallJob, setIsSmallJob] = useState(false);
+
+  const [engineResult, setEngineResult] = useState<CalculationApiResponse | null>(null);
+  const [savedLines, setSavedLines] = useState<QuoteLine[]>([]);
+  const [workflowDefinition, setWorkflowDefinition] = useState<WorkflowDefinition | null>(null);
+  const [workflowVersion, setWorkflowVersion] = useState<number | null>(null);
+  const [workflowExtraAnswers, setWorkflowExtraAnswers] = useState<WorkflowAnswers>({});
+  const [workflowError, setWorkflowError] = useState("");
+
+  const loadOptions = useCallback(
+    async (profileId: string) => {
+      if (!profileId || optionsByProfile[profileId]) return;
+      const res = await fetch(
+        `/api/catalogue?table=profile_options&profile_id=${profileId}`,
+      );
+      const json = await readJson<CatalogueListResponse>(res);
+      if (!res.ok) throw new Error(json.error || "Options failed");
+      setOptionsByProfile((c) => ({ ...c, [profileId]: json.data ?? [] }));
+    },
+    [optionsByProfile],
+  );
+
+  useEffect(() => {
+    async function init() {
+      try {
+        const jobResult = await getJob(jobId);
+        if (!jobResult) {
+          router.replace("/jobs");
+          return;
+        }
+        let quoteResult = await getQuoteForJob(jobId);
+        if (!quoteResult) {
+          quoteResult = await createQuote(jobId, jobResult.jobNumber);
+        }
+
+        const [pRes, mRes, lines, workflowRes] = await Promise.all([
+          fetch("/api/catalogue?table=profiles").then((response) => readJson<CatalogueListResponse>(response)),
+          fetch("/api/catalogue?table=materials").then((response) => readJson<CatalogueListResponse>(response)),
+          getQuoteLines(quoteResult.id),
+          fetch("/api/workflows?key=roofing-cladding")
+            .then(async (response) => {
+              const json = await readJson<WorkflowLoadResponse>(response);
+              return response.ok ? json : { error: json.error || "Unable to load quote workflow." } as WorkflowLoadResponse;
+            })
+            .catch((cause): WorkflowLoadResponse => ({ error: cause instanceof Error ? cause.message : "Unable to load quote workflow." })),
+        ]);
+
+        setJob(jobResult);
+        setQuote(quoteResult);
+        setProfiles(pRes.data ?? []);
+        setMaterials(mRes.data ?? []);
+        setSavedLines(lines);
+        if (workflowRes?.published?.definition) {
+          setWorkflowDefinition(workflowRes.published.definition as WorkflowDefinition);
+          setWorkflowVersion(Number(workflowRes.published.version));
+          setWorkflowError("");
+        } else {
+          setWorkflowError(workflowRes?.error || "No published quote workflow was found.");
+        }
+
+        const roofMat = lines.find(
+          (l) =>
+            l.section === "Roofing" &&
+            l.category === "Material" &&
+            l.metadata?.kind === "profile",
+        );
+        if (roofMat?.metadata) {
+          const m = roofMat.metadata as Record<string, unknown>;
+          setRoof((r) => ({
+            ...r,
+            areaM2: Number(m.area ?? roofMat.quantity) || 0,
+            profileId: String(m.profileId ?? ""),
+            profileOptionId: String(m.profileOptionId ?? ""),
+            materialId: String(m.materialId ?? ""),
+          }));
+          if (m.profileId) loadOptions(String(m.profileId));
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to load quote");
+      } finally {
+        setLoading(false);
+      }
+    }
+    init();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId, router]);
+
+  function updateSection(which: "roof" | "wall", patch: Partial<SectionForm>) {
+    const setter = which === "roof" ? setRoof : setWall;
+    setter((cur) => {
+      const next = { ...cur, ...patch };
+      if (patch.profileId !== undefined) {
+        next.profileOptionId = "";
+        if (patch.profileId) loadOptions(patch.profileId).catch(() => {});
+      }
+      return next;
+    });
+    setEngineResult(null);
+  }
+
+  function addFlashing(which: "roof" | "wall") {
+    const row: FlashingRow = {
+      id: crypto.randomUUID(),
+      name: "",
+      girthMm: 400,
+      lengthM: 0,
+      quantity: 1,
+    };
+    if (which === "roof") {
+      setRoof((c) => ({ ...c, flashings: [...c.flashings, row] }));
+    } else {
+      setWall((c) => ({ ...c, flashings: [...c.flashings, row] }));
+    }
+    setEngineResult(null);
+  }
+
+  function updateFlashing(
+    which: "roof" | "wall",
+    id: string,
+    updates: Partial<FlashingRow>,
+  ) {
+    const setter = which === "roof" ? setRoof : setWall;
+    setter((current) => ({
+      ...current,
+      flashings: current.flashings.map((flashing) =>
+        flashing.id === id ? { ...flashing, ...updates } : flashing,
+      ),
+    }));
+    setEngineResult(null);
+  }
+
+  function removeFlashing(which: "roof" | "wall", id: string) {
+    const setter = which === "roof" ? setRoof : setWall;
+    setter((current) => ({
+      ...current,
+      flashings: current.flashings.filter((flashing) => flashing.id !== id),
+    }));
+    setEngineResult(null);
+  }
+
+  function getWorkflowAnswers(): WorkflowAnswers {
+    return {
+      includeRoof,
+      "roof.areaM2": roof.areaM2,
+      includeWall,
+      "wall.areaM2": wall.areaM2,
+      measureRequired,
+      isSmallJob,
+      ...workflowExtraAnswers,
+    };
+  }
+
+  function sectionPayload(s: SectionForm) {
+    return {
+      areaM2: s.areaM2,
+      linealMetres: s.areaM2,
+      profileId: s.profileId,
+      profileOptionId: s.profileOptionId,
+      materialId: s.materialId,
+      pitchDegrees: s.pitchDegrees,
+      flashings: s.flashings
+        .filter((f) => f.lengthM > 0)
+        .map((f) => ({
+          id: f.id,
+          flashingTypeId: null,
+          customName: f.name || "Flashing",
+          girthMm: f.girthMm,
+          materialId: s.materialId,
+          lengthM: f.lengthM,
+          quantity: f.quantity,
+        })),
+    };
+  }
+
+  async function runCalculate() {
+    setCalculating(true);
+    setError("");
+    setStatus("");
+    try {
+      if (!quote) throw new Error("The quote is still loading. Try again in a moment.");
+      const body: Record<string, unknown> = {
+        quoteId: quote.id,
+        jobContext: { measureRequired, isSmallJob },
+        workflowAnswers: getWorkflowAnswers(),
+        workflowVersion,
+      };
+      if (
+        includeRoof &&
+        roof.profileId &&
+        roof.materialId &&
+        roof.profileOptionId
+      ) {
+        body.roof = sectionPayload(roof);
+      }
+      if (
+        includeWall &&
+        wall.profileId &&
+        wall.materialId &&
+        wall.profileOptionId
+      ) {
+        body.wall = sectionPayload(wall);
+      }
+      if (!body.roof && !body.wall) {
+        throw new Error(
+          "Enable Roof and/or Wall and select profile, option, and material.",
+        );
+      }
+
+      const res = await fetch("/api/costing/calculate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = await readJson<CalculationApiResponse>(res);
+      if (!res.ok) throw new Error(json.error || "Calculate failed");
+      setEngineResult(json);
+      setStatus(
+        `Calculated with costing rules v${json.meta?.ruleSetVersion ?? "?"} and workflow v${json.meta?.workflowVersion ?? "?"} — review totals, then save.`,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Calculate failed");
+    } finally {
+      setCalculating(false);
+    }
+  }
+
+  async function runSave() {
+    if (!quote || !engineResult?.result?.lines) {
+      setError("Calculate first, then save.");
+      return;
+    }
+    const readyToIssue = engineResult.result.readyToIssue === true && workflowEvaluation?.ready === true;
+    setSaving(true);
+    setError("");
+    try {
+      const lines: QuoteLine[] = engineResult.result.lines.map(
+        (line, i) => ({
+          id: line.id || crypto.randomUUID(),
+          quoteId: quote.id,
+          section: line.section,
+          category: line.category,
+          description: line.description,
+          quantity: line.quantity,
+          unit: line.unit,
+          unitCost: line.unitCost,
+          sellPrice: line.sellPrice,
+          sortOrder: line.sortOrder ?? i,
+          metadata: line.metadata ?? {},
+        }),
+      );
+      const saved = await saveQuoteLines(quote.id, lines);
+      setSavedLines(saved);
+
+      const sellTotal = engineResult.result?.sell?.total;
+      const totalLabel =
+        sellTotal != null ? ` · sell ${money(sellTotal)}` : "";
+      setStatus(
+        readyToIssue
+          ? `Saved ${saved.length} priced line(s)${totalLabel}. Review the quote, then use Issue quote when it is ready to send.`
+          : `Saved ${saved.length} line(s) as a draft${totalLabel}. The job has not been marked Quoted because pricing is incomplete; resolve the notes below and recalculate.`,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function runIssue() {
+    if (!quote || !engineResult?.result?.readyToIssue || workflowEvaluation?.ready !== true || !sameSavedCalculation(engineResult.result.lines, savedLines)) {
+      setError("Save the current fully priced calculation before issuing this quote.");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    setStatus("");
+    try {
+      const response = await fetch(`/api/quotes/${encodeURIComponent(quote.id)}/issue`, {
+        method: "POST",
+      });
+      const json = await readJson<IssueApiResponse>(response);
+      if (!response.ok) {
+        const details = Array.isArray(json.details) ? ` ${json.details.join(" ")}` : "";
+        throw new Error((json.error || "Unable to issue quote.") + details);
+      }
+
+      setQuote({ ...quote, status: "Issued" });
+      if (job && json.jobStatus === "Quoted" && job.status === "Opportunity") {
+        const today = new Date().toISOString().slice(0, 10);
+        setJob({ ...job, status: "Quoted", dates: { ...job.dates, quoted: today } });
+      }
+      setStatus("Quote issued successfully. The issue status was confirmed by the server.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to issue quote.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function uniqueByName(list: Opt[]) {
+    const seen = new Set<string>();
+    return list.filter((p) => {
+      const key = (p.name ?? "").toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  const roofProfiles = uniqueByName(
+    profiles.filter((p) => p.section === "Roofing"),
+  );
+  const wallProfiles = uniqueByName(
+    profiles.filter((p) => p.section === "Wall Cladding"),
+  );
+
 
   if (loading) {
     return (
@@ -693,7 +713,13 @@ export default function QuotePage() {
             form={roof}
             profileList={roofProfiles}
             enabled={includeRoof}
-            onEnabled={setIncludeRoof}
+            onEnabled={(value) => { setIncludeRoof(value); setEngineResult(null); }}
+            optionsByProfile={optionsByProfile}
+            materials={materials}
+            updateSection={updateSection}
+            addFlashing={addFlashing}
+            updateFlashing={updateFlashing}
+            removeFlashing={removeFlashing}
           />
           <SectionEditor
             title="Wall cladding"
@@ -701,7 +727,13 @@ export default function QuotePage() {
             form={wall}
             profileList={wallProfiles}
             enabled={includeWall}
-            onEnabled={setIncludeWall}
+            onEnabled={(value) => { setIncludeWall(value); setEngineResult(null); }}
+            optionsByProfile={optionsByProfile}
+            materials={materials}
+            updateSection={updateSection}
+            addFlashing={addFlashing}
+            updateFlashing={updateFlashing}
+            removeFlashing={removeFlashing}
           />
 
           <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
@@ -945,7 +977,7 @@ export default function QuotePage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(result.lines ?? []).map((line: any) => (
+                    {(result.lines ?? []).map((line) => (
                       <tr key={line.id} className="border-b border-zinc-100">
                         <td className="py-1.5 pr-2">{line.description}</td>
                         <td className="py-1.5 pr-2">
