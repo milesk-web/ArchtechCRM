@@ -298,8 +298,23 @@ export function validateWorkflowDefinition(value: unknown): string[] {
     errors.push("Workflow components must be an array.");
   }
 
+  const workflowFields = Array.isArray(definition.fields) ? definition.fields : [];
+  const coreFields: Array<{ id: string; type: WorkflowField["type"] }> = [
+    { id: "includeRoof", type: "boolean" },
+    { id: "roof.areaM2", type: "number" },
+    { id: "includeWall", type: "boolean" },
+    { id: "wall.areaM2", type: "number" },
+    { id: "measureRequired", type: "boolean" },
+    { id: "isSmallJob", type: "boolean" },
+  ];
+  for (const core of coreFields) {
+    const field = workflowFields.find((candidate) => candidate?.id === core.id);
+    if (!field) errors.push(`Required core question is missing: ${core.id}.`);
+    else if (field.type !== core.type) errors.push(`Core question "${core.id}" must use type ${core.type}.`);
+  }
+
   const fieldIds = new Set<string>();
-  for (const [index, rawField] of (Array.isArray(definition.fields) ? definition.fields : []).entries()) {
+  for (const [index, rawField] of workflowFields.entries()) {
     if (!rawField || typeof rawField !== "object") {
       errors.push(`Question ${index + 1} is invalid.`);
       continue;
