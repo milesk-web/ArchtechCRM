@@ -705,6 +705,112 @@ export default function QuotePage() {
           />
 
           <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-medium">Workflow questions</h2>
+                <p className="text-xs text-zinc-500">
+                  {workflowVersion != null ? `Published workflow v${workflowVersion}` : "Published workflow unavailable"}
+                </p>
+              </div>
+              {workflowEvaluation && (
+                <span className={`rounded-full px-3 py-1 text-xs font-medium ${workflowEvaluation.ready ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-900"}`}>
+                  {workflowEvaluation.ready ? "Workflow complete" : "Workflow incomplete"}
+                </span>
+              )}
+            </div>
+            {workflowError && <p className="mb-3 text-sm text-amber-800">{workflowError}</p>}
+            {extraWorkflowFields.length === 0 ? (
+              <p className="text-sm text-zinc-500">No additional workflow questions are configured. Core roof/wall fields and job-fee switches are mapped to the published workflow.</p>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2">
+                {extraWorkflowFields.map((field) => {
+                  const value = workflowExtraAnswers[field.id] ?? field.defaultValue ?? "";
+                  const missing = workflowEvaluation?.missingRequiredFields.some((item) => item.id === field.id) ?? false;
+                  return (
+                    <div key={field.id}>
+                      <label className="mb-1 block text-xs font-medium text-zinc-600">
+                        {field.label}{missing ? " *" : ""}
+                      </label>
+                      {field.type === "boolean" ? (
+                        <label className="flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(value)}
+                            onChange={(event) => {
+                              setWorkflowExtraAnswers((current) => ({ ...current, [field.id]: event.target.checked }));
+                              setEngineResult(null);
+                            }}
+                          />
+                          {field.helpText || "Yes"}
+                        </label>
+                      ) : field.type === "select" ? (
+                        <select
+                          value={typeof value === "string" ? value : ""}
+                          onChange={(event) => {
+                            setWorkflowExtraAnswers((current) => ({ ...current, [field.id]: event.target.value }));
+                            setEngineResult(null);
+                          }}
+                          className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                        >
+                          <option value="">Select…</option>
+                          {(field.options ?? []).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        </select>
+                      ) : field.type === "multiselect" ? (
+                        <select
+                          multiple
+                          value={Array.isArray(value) ? value : []}
+                          onChange={(event) => {
+                            setWorkflowExtraAnswers((current) => ({ ...current, [field.id]: Array.from(event.target.selectedOptions, (option) => option.value) }));
+                            setEngineResult(null);
+                          }}
+                          className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                        >
+                          {(field.options ?? []).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        </select>
+                      ) : (
+                        <input
+                          type={field.type === "number" ? "number" : "text"}
+                          value={typeof value === "string" || typeof value === "number" ? value : ""}
+                          onChange={(event) => {
+                            const nextValue = field.type === "number" && event.target.value !== ""
+                              ? Number(event.target.value)
+                              : event.target.value;
+                            setWorkflowExtraAnswers((current) => ({ ...current, [field.id]: nextValue }));
+                            setEngineResult(null);
+                          }}
+                          className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                        />
+                      )}
+                      {field.helpText && field.type !== "boolean" && <p className="mt-1 text-xs text-zinc-500">{field.helpText}</p>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {workflowEvaluation && workflowEvaluation.missingRequiredFields.length > 0 && (
+              <p className="mt-3 text-sm text-amber-800">
+                Required answers missing: {workflowEvaluation.missingRequiredFields.map((field) => field.label).join(", ")}.
+              </p>
+            )}
+            {workflowEvaluation && workflowEvaluation.warnings.length > 0 && (
+              <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-800">
+                {workflowEvaluation.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+              </ul>
+            )}
+            {workflowEvaluation && workflowEvaluation.components.length > 0 && (
+              <details className="mt-4 border-t border-zinc-100 pt-3">
+                <summary className="cursor-pointer text-sm font-medium text-zinc-700">Workflow-generated work preview ({workflowEvaluation.components.length})</summary>
+                <p className="mt-2 text-xs text-zinc-500">Preview only: current quote line pricing is still produced by the roofing/cladding costing engine.</p>
+                <ul className="mt-2 space-y-1 text-sm text-zinc-600">
+                  {workflowEvaluation.components.map((component) => (
+                    <li key={component.id}>{component.name}: {component.quantity} {component.unit}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </section>
+
+          <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
             <h2 className="mb-3 text-lg font-medium">Job fees</h2>
             <div className="flex flex-wrap gap-6 text-sm">
               <label className="flex items-center gap-2">
