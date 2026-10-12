@@ -192,7 +192,7 @@ export default function WorkflowBuilderPage() {
           <ul className="mt-3 list-disc space-y-2 pl-5 text-zinc-600">
             <li>Question types: <code>text</code>, <code>number</code>, <code>boolean</code>, <code>select</code>, and <code>multiselect</code>.</li>
             <li>Conditions support <code>equals</code>, <code>not_equals</code>, numeric comparisons, <code>contains</code>, <code>is_set</code>, <code>is_not_set</code>, plus nested <code>all</code>, <code>any</code>, and <code>not</code>.</li>
-            <li>Generated work quantities can be constant or derived from an answer field using a multiplier and addend. Pricing is applied separately by the costing engine.</li>
+            <li>Generated work quantities can be constant or derived from an answer field using a multiplier and addend. To add a priced line, set `pricing` with `unitCost`, `section`, and optional `markupRuleType` (`material_markup`, `labour_markup`, or `none`). Material/labour markups use the selected published costing rule. Otherwise declare `pricingMode: "costing_engine"` for work priced by the existing roof/wall engine, or `pricingMode: "informational"` for a preview-only component. A component with neither a price nor a mode blocks quote issuance.</li>
             <li>Published versions are immutable. Apply <code>supabase/migrations/20261013_versioned_quote_workflows.sql</code> before using this page.</li>
           </ul>
         </section>

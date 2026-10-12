@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { calculateQuote } from "@/lib/costing/engine";
+import { applyWorkflowPricing } from "@/lib/costing/workflow-pricing";
 import { evaluateWorkflow, validateWorkflowDefinition, type WorkflowAnswers, type WorkflowDefinition } from "@/lib/workflows/engine";
 import type {
   CatalogueSnapshot,
@@ -327,7 +328,8 @@ export async function POST(request: Request) {
     const workflowEvaluation = evaluateWorkflow(workflowDefinition, workflowAnswers);
     const pricingRules = parsePublishedRules(ruleSet.rules);
     const catalogue = await loadSnapshot(pricingRules);
-    const result = calculateQuote(body as QuoteInput, catalogue);
+    let result = calculateQuote(body as QuoteInput, catalogue);
+    result = applyWorkflowPricing(result, workflowEvaluation.components, catalogue, workflowRow.version);
 
     const workflowBlockers = [
       ...workflowEvaluation.missingRequiredFields.map((field) => `Required workflow question: ${field.label}.`),

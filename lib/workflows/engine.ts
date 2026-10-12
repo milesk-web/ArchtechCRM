@@ -42,6 +42,14 @@ export type QuantityFormula =
   | { kind: "constant"; value: number }
   | { kind: "field"; field: string; multiplier?: number; add?: number };
 
+export type WorkflowComponentPricingMode = "costing_engine" | "informational";
+
+export type WorkflowComponentPricing = {
+  unitCost: number;
+  markupRuleType?: "material_markup" | "labour_markup" | "none";
+  section: "Roofing" | "Wall Cladding" | "Accessories" | "Fees";
+};
+
 export type WorkflowComponentDefinition = {
   id: string;
   name: string;
@@ -50,6 +58,8 @@ export type WorkflowComponentDefinition = {
   quantity: QuantityFormula;
   when?: WorkflowCondition;
   metadata?: Record<string, unknown>;
+  pricing?: WorkflowComponentPricing;
+  pricingMode?: WorkflowComponentPricingMode;
 };
 
 export type WorkflowDefinition = {
@@ -67,6 +77,8 @@ export type GeneratedWorkComponent = {
   unit: string;
   quantity: number;
   metadata: Record<string, unknown>;
+  pricing?: WorkflowComponentPricing;
+  pricingMode?: WorkflowComponentPricingMode;
 };
 
 export type WorkflowEvaluation = {
@@ -217,6 +229,8 @@ export function evaluateWorkflow(
       unit: component.unit,
       quantity,
       metadata: { ...(component.metadata ?? {}) },
+      ...(component.pricing ? { pricing: { ...component.pricing } } : {}),
+      ...(component.pricingMode ? { pricingMode: component.pricingMode } : {}),
     });
   }
 
@@ -368,6 +382,54 @@ export function validateWorkflowDefinition(value: unknown): string[] {
       }
     } else {
       errors.push(`Component "${component.name}" uses an unsupported quantity formula.`);
+    }
+    const validCategories = ["Material", "Flashing", "Labour", "Underlay", "Accessory", "Fee"];
+    if (!validCategories.includes(component.category)) {
+      errors.push(`Component "${component.name}" has an unsupported costing category.`);
+    }
+    if (component.pricingMode !== undefined && !["costing_engine", "informational"].includes(component.pricingMode)) {
+      errors.push(`Component "${component.name}" has an unsupported pricingMode.`);
+    }
+    if (component.pricing !== undefined && component.pricingMode !== undefined) {
+      errors.push(`Component "${component.name}" must use pricing or pricingMode, not both.`);
+    }
+    if (component.pricing === undefined && component.pricingMode === undefined) {
+      errors.push(`Component "${component.name}" must configure pricing or declare pricingMode as costing_engine or informational.`);
+    }
+    if (component.pricing !== undefined) {
+      const pricing = component.pricing as WorkflowComponentPricing;
+      if (!pricing || typeof pricing !== "object" || !Number.isFinite(pricing.unitCost) || pricing.unitCost < 0) {
+        errors.push(`Component "${component.name}" has an invalid fixed unit cost.`);
+      } else {
+        const markupType = pricing.markupRuleType ?? "none";
+        if (!["material_markup", "labour_markup", "none"].includes(markupType)) {
+          errors.push(`Component "${component.name}" has an unsupported markup rule.`);
+        }
+        if (!pricing.section || !["Roofing", "Wall Cladding", "Accessories", "Fees"].includes(pricing.section)) {
+          errors.push(`Component "${component.name}" must specify a valid pricing section.`);
+        }
+        if (markupType !== "none" && !["Roofing", "Wall Cladding"].includes(pricing.section ?? "")) {
+          errors.push(`Component "${component.name}" must specify Roofing or Wall Cladding when applying a markup rule.`);
+        }
+        if (markupType === "labour_markup" && component.category !== "Labour") {
+          errors.push(`Component "${component.name}" must use the Labour category with labour markup.`);
+        }
+        if (markupType === "material_markup" && !["Material", "Flashing", "Underlay", "Accessory"].includes(component.category)) {
+          errors.push(`Component "${component.name}" must use a material category with material markup.`);
+        }
+        if (component.category === "Fee" && pricing.section !== "Fees") {
+          errors.push(`Fee component "${component.name}" must use the Fees section.`);
+        }
+        if (component.category === "Labour" && !["Roofing", "Wall Cladding"].includes(pricing.section ?? "")) {
+          errors.push(`Labour component "${component.name}" must use Roofing or Wall Cladding.`);
+        }
+        if (["Material", "Flashing", "Underlay"].includes(component.category) && !["Roofing", "Wall Cladding"].includes(pricing.section ?? "")) {
+          errors.push(`Material component "${component.name}" must use Roofing or Wall Cladding.`);
+        }
+        if (component.category === "Accessory" && !["Accessories", "Roofing", "Wall Cladding"].includes(pricing.section ?? "")) {
+          errors.push(`Accessory component "${component.name}" must use Accessories, Roofing, or Wall Cladding.`);
+        }
+      }
     }
     if (component.when !== undefined) validateCondition(component.when, `Component "${component.name}" condition`, errors);
   }
