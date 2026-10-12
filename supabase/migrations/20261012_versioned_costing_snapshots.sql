@@ -83,8 +83,6 @@ create trigger costing_rule_sets_immutable_rules
 
 alter table costing_rule_sets enable row level security;
 drop policy if exists "authenticated read costing_rule_sets" on costing_rule_sets;
-create policy "authenticated read costing_rule_sets"
-  on costing_rule_sets for select to authenticated using (true);
 
 insert into costing_rule_sets (name, version, status, rules, published_at)
 select
@@ -123,5 +121,3 @@ create index if not exists quote_calculation_snapshots_quote_created_idx
 
 alter table quote_calculation_snapshots enable row level security;
 drop policy if exists "authenticated read quote_calculation_snapshots" on quote_calculation_snapshots;
-create policy "authenticated read quote_calculation_snapshots"
-  on quote_calculation_snapshots for select to authenticated using (true);
